@@ -1,0 +1,167 @@
+<!doctype html>
+<html lang="es">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Sistema Mayor · Inventario</title>
+  <link rel="icon" href="data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' viewBox='0 0 32 32'%3E%3Crect width='32' height='32' rx='8' fill='%230f766e'/%3E%3Ctext x='16' y='21' font-family='Arial' font-weight='700' font-size='13' fill='white' text-anchor='middle'%3ESM%3C/text%3E%3C/svg%3E">
+  <link rel="preconnect" href="https://fonts.googleapis.com">
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>
+  <link rel="stylesheet" href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap">
+  <link rel="stylesheet" href="css/styles.css">
+  <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
+  <script defer src="js/config.js"></script>
+  <script defer src="js/app.js"></script>
+</head>
+<body>
+
+  <div id="vista-cargando" class="cargando">
+    <div class="spinner" aria-label="Cargando"></div>
+  </div>
+
+  <!-- ============ LOGIN ============ -->
+  <main id="vista-login" class="login" hidden>
+    <form id="form-login" class="login-card" novalidate>
+      <div class="logo" aria-hidden="true">SM</div>
+      <h1>Sistema Mayor</h1>
+      <p class="login-sub">Inicia sesión para consultar el inventario</p>
+
+      <label class="campo">
+        <span>Usuario</span>
+        <input name="usuario" autocomplete="username" autocapitalize="none" spellcheck="false" required autofocus>
+      </label>
+      <label class="campo">
+        <span>Contraseña</span>
+        <input name="clave" type="password" autocomplete="current-password" required>
+      </label>
+
+      <p id="login-error" class="alerta alerta-error" role="alert" hidden></p>
+
+      <button type="submit" class="btn btn-primario btn-bloque">Entrar</button>
+    </form>
+  </main>
+
+  <!-- ============ APLICACIÓN ============ -->
+  <div id="vista-app" hidden>
+    <header class="barra">
+      <div class="barra-marca">
+        <span class="logo logo-sm" aria-hidden="true">SM</span>
+        <span>Sistema Mayor</span>
+      </div>
+      <div class="barra-usuario">
+        <span id="usuario-nombre" class="usuario-nombre"></span>
+        <span id="usuario-rol" class="chip"></span>
+        <button id="btn-salir" type="button" class="btn btn-fantasma btn-sm">Salir</button>
+      </div>
+    </header>
+
+    <main class="contenido">
+      <section class="panel-superior">
+        <div class="buscador">
+          <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
+          <input id="buscar" type="search" placeholder="Buscar producto…" autocomplete="off" aria-label="Buscar producto por nombre o descripción">
+        </div>
+
+        <div class="tasa">
+          <div>
+            <div class="tasa-etiqueta">Tasa del dólar</div>
+            <div class="tasa-valor"><span id="tasa-valor">—</span></div>
+            <div id="tasa-fecha" class="tasa-fecha"></div>
+          </div>
+          <button id="btn-tasa" type="button" class="btn btn-secundario btn-sm solo-admin">Cambiar</button>
+        </div>
+      </section>
+
+      <div class="encabezado-lista">
+        <p id="conteo" class="conteo"></p>
+        <button id="btn-nuevo" type="button" class="btn btn-primario solo-admin">+ Nuevo producto</button>
+      </div>
+
+      <div class="tabla-contenedor">
+        <table class="tabla">
+          <thead>
+            <tr>
+              <th>Producto</th>
+              <th class="num">Cantidad</th>
+              <th class="num">Precio COP</th>
+              <th class="num">Precio USD</th>
+              <th class="solo-admin"><span class="sr-only">Acciones</span></th>
+            </tr>
+          </thead>
+          <tbody id="tabla-cuerpo"></tbody>
+        </table>
+        <p id="vacio" class="vacio" hidden></p>
+      </div>
+    </main>
+  </div>
+
+  <!-- ============ DIÁLOGO: PRODUCTO ============ -->
+  <dialog id="dlg-producto" class="dialogo">
+    <form id="form-producto" novalidate>
+      <h2 id="dlg-producto-titulo">Nuevo producto</h2>
+
+      <label class="campo">
+        <span>Nombre</span>
+        <input name="nombre" maxlength="150" required>
+      </label>
+      <label class="campo">
+        <span>Descripción</span>
+        <textarea name="descripcion" rows="3" maxlength="500"></textarea>
+      </label>
+      <div class="fila-2">
+        <label class="campo">
+          <span>Cantidad</span>
+          <input name="cantidad" type="number" min="0" step="1" inputmode="numeric" required>
+        </label>
+        <label class="campo">
+          <span>Precio (pesos COP)</span>
+          <input name="precio_cop" inputmode="decimal" placeholder="Ej: 150.000" required>
+        </label>
+      </div>
+      <p id="producto-vista" class="vista-previa"></p>
+
+      <p id="producto-error" class="alerta alerta-error" role="alert" hidden></p>
+
+      <div class="dialogo-acciones">
+        <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+        <button type="submit" class="btn btn-primario">Guardar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ============ DIÁLOGO: TASA ============ -->
+  <dialog id="dlg-tasa" class="dialogo dialogo-sm">
+    <form id="form-tasa" novalidate>
+      <h2>Tasa de cambio del dólar</h2>
+      <p class="ayuda">¿Cuántos pesos colombianos vale 1 dólar?</p>
+
+      <label class="campo">
+        <span>1 USD equivale a (COP)</span>
+        <input name="tasa" inputmode="decimal" placeholder="Ej: 4.000" required>
+      </label>
+      <p id="tasa-vista" class="vista-previa"></p>
+
+      <p id="tasa-error" class="alerta alerta-error" role="alert" hidden></p>
+
+      <div class="dialogo-acciones">
+        <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+        <button type="submit" class="btn btn-primario">Guardar tasa</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ============ DIÁLOGO: CONFIRMAR ELIMINAR ============ -->
+  <dialog id="dlg-eliminar" class="dialogo dialogo-sm">
+    <form id="form-eliminar">
+      <h2>Eliminar producto</h2>
+      <p>¿Seguro que quieres eliminar <strong id="eliminar-nombre"></strong>? Esta acción no se puede deshacer.</p>
+      <div class="dialogo-acciones">
+        <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+        <button type="submit" class="btn btn-peligro">Eliminar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <div id="toast" class="toast" role="status" aria-live="polite" hidden></div>
+</body>
+</html>
