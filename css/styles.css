@@ -118,7 +118,7 @@ h1, h2 { margin: 0; line-height: 1.25; }
 .campo { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
 .campo > span, .campo > label { font-size: 13px; font-weight: 600; color: var(--texto-2); }
 
-input, textarea {
+input, textarea, select {
   width: 100%;
   padding: 10px 12px;
   font: inherit; color: var(--texto);
@@ -127,7 +127,7 @@ input, textarea {
   transition: border-color .15s, box-shadow .15s;
 }
 textarea { resize: vertical; min-height: 72px; }
-input:focus, textarea:focus {
+input:focus, textarea:focus, select:focus {
   outline: none;
   border-color: var(--primario);
   box-shadow: 0 0 0 3px color-mix(in srgb, var(--primario) 20%, transparent);
@@ -454,6 +454,76 @@ body[data-rol="jefe"] .campo-clave-jefe { display: none; }
 .dialogo p { margin-top: 0; }
 .dialogo-acciones { display: flex; justify-content: flex-end; gap: 8px; margin-top: 8px; }
 
+/* ---------------- Carrito ---------------- */
+
+.acciones-lista { display: flex; flex-wrap: wrap; gap: 8px; }
+
+.btn-en-carrito {
+  background: var(--primario-suave); color: var(--primario);
+  border-color: color-mix(in srgb, var(--primario) 40%, transparent);
+}
+.btn-en-carrito:hover:not(:disabled) { background: color-mix(in srgb, var(--primario-suave) 70%, var(--primario) 12%); }
+
+.carrito-barra {
+  position: fixed; left: 50%; bottom: 16px; transform: translateX(-50%); z-index: 50;
+  display: flex; align-items: center; gap: 20px;
+  width: min(720px, calc(100vw - 32px));
+  padding: 12px 12px 12px 20px;
+  background: var(--superficie); border: 1px solid color-mix(in srgb, var(--primario) 45%, var(--borde));
+  border-radius: 14px; box-shadow: var(--sombra-alta);
+}
+.carrito-resumen { display: flex; flex-direction: column; flex: 1; min-width: 0; }
+.carrito-resumen strong { font-size: 14px; }
+.carrito-resumen span { font-size: 20px; font-weight: 700; }
+body.con-carrito .contenido { padding-bottom: 110px; }
+body.con-carrito .toast { bottom: 104px; }
+
+.dialogo-carrito { width: min(680px, calc(100vw - 32px)); }
+.carrito-lineas { margin: 0 0 12px; padding: 0; list-style: none; border: 1px solid var(--borde); border-radius: var(--radio-sm); }
+.carrito-lineas li {
+  display: grid; grid-template-columns: 1fr auto auto auto; align-items: center; gap: 12px;
+  padding: 12px; border-bottom: 1px solid var(--borde);
+}
+.carrito-lineas li:last-child { border-bottom: 0; }
+.carrito-producto { min-width: 0; }
+.carrito-producto .producto-nombre { margin-top: 4px; font-size: 14px; }
+.carrito-precio { font-size: 12px; color: var(--texto-3); }
+.carrito-cantidad { display: flex; align-items: center; gap: 6px; }
+.carrito-cantidad .btn { width: 32px; padding: 0; font-size: 16px; }
+.carrito-n { min-width: 28px; text-align: center; font-weight: 700; font-variant-numeric: tabular-nums; }
+.carrito-subtotal { min-width: 90px; text-align: right; font-variant-numeric: tabular-nums; }
+
+/* ---------------- Historial de precio (editar producto) ---------------- */
+
+.historial-precio { margin: 0 0 14px; font-size: 13px; }
+.historial-precio summary { cursor: pointer; font-weight: 600; color: var(--texto-2); }
+.historial-precio ul { margin: 8px 0 0; padding: 0; list-style: none; border: 1px solid var(--borde); border-radius: var(--radio-sm); }
+.historial-precio li { display: grid; grid-template-columns: 1fr auto; gap: 2px 12px; padding: 8px 10px; border-bottom: 1px solid var(--borde); }
+.historial-precio li:last-child { border-bottom: 0; }
+.historial-precio li span:nth-child(2) { text-align: right; font-weight: 600; font-variant-numeric: tabular-nums; }
+.historial-quien { grid-column: 1 / -1; color: var(--texto-3); }
+
+/* ---------------- Reportes ---------------- */
+
+.cierre-controles select { width: auto; height: 40px; padding: 0 10px; }
+.reporte-fechas { display: inline-flex; align-items: center; gap: 6px; color: var(--texto-3); }
+.reporte-fechas input { width: auto; height: 40px; padding: 0 8px; }
+.tarjeta-ancha { margin-bottom: 16px; }
+
+/* ---------------- Importar desde Excel ---------------- */
+
+.dialogo-ancho { width: min(820px, calc(100vw - 32px)); }
+.pasos-importar { margin: 0 0 12px; padding-left: 20px; font-size: 14px; }
+.pasos-importar li { margin-bottom: 14px; }
+.pasos-importar li > div { margin-top: 8px; }
+.pasos-importar input[type="file"] { display: block; margin-top: 8px; padding: 8px; }
+.segmentado-vertical { grid-template-columns: 1fr; margin: 8px 0 0; }
+.importar-tabla { max-height: 320px; overflow: auto; margin: 0 0 14px; border: 1px solid var(--borde); border-radius: var(--radio-sm); padding: 0; }
+.importar-tabla th { position: sticky; top: 0; background: var(--superficie); }
+.tabla-simple tr.fila-error td { background: var(--peligro-suave); color: var(--peligro-texto-suave); }
+.tabla-simple tr.fila-nueva td:last-child { color: var(--ok-texto); font-weight: 600; }
+.tabla-simple tr.fila-cambio td:last-child { color: var(--aviso-texto); font-weight: 600; }
+
 /* ---------------- Aviso flotante ---------------- */
 
 .toast {
@@ -531,6 +601,15 @@ body[data-rol="atencion"] .btn-vender { height: 46px; min-width: 110px; padding:
   .cierre-controles { width: 100%; }
   .cierre-controles input[type="date"] { flex: 1 1 100%; }
   .cierre-controles .btn { flex: 1; }
+  .cierre-controles select { flex: 1 1 100%; }
+  .reporte-fechas { flex: 1 1 100%; }
+  .reporte-fechas input { flex: 1; }
+
+  .carrito-barra { bottom: 8px; padding: 10px 10px 10px 14px; gap: 12px; }
+  .carrito-resumen span { font-size: 17px; }
+  .carrito-lineas li { grid-template-columns: 1fr auto; }
+  .carrito-subtotal { text-align: left; }
+  .encabezado-lista { flex-wrap: wrap; }
   body[data-rol="atencion"] .buscador input { min-height: 60px; font-size: 18px; }
 }
 

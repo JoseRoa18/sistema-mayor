@@ -66,6 +66,9 @@ create table if not exists public.configuracion (
 
 insert into public.configuracion (id) values (1) on conflict (id) do nothing;
 
+-- ¿Cambiar un precio requiere la clave del jefe? (lo decide el jefe en Configuración)
+alter table public.configuracion add column if not exists precio_requiere_clave boolean not null default true;
+
 -- Cada venta guarda una copia del código, nombre, precio y tasa del momento,
 -- para que el reporte no cambie si después se edita o elimina el producto.
 -- Solo se crean y anulan con las funciones registrar_venta / anular_venta.
@@ -113,6 +116,11 @@ create table if not exists public.vendedores (
 
 alter table public.ventas add column if not exists vendedor_id bigint references public.vendedores (id) on delete set null;
 
+-- Número de venta: agrupa los productos que se cobraron juntos (carrito).
+create sequence if not exists public.ventas_ticket_seq;
+alter table public.ventas add column if not exists ticket bigint;
+create index if not exists ventas_ticket on public.ventas (ticket);
+
 -- Historial de todo lo que mueve el inventario: ventas, anulaciones,
 -- entradas y salidas autorizadas con la clave del jefe.
 create table if not exists public.movimientos (
@@ -132,6 +140,23 @@ create table if not exists public.movimientos (
 );
 
 create index if not exists movimientos_creado_en on public.movimientos (creado_en);
+
+-- Historial de precios: cada cambio queda con quién, cuándo, antes y después.
+-- Lo llena un trigger, así no hay forma de cambiar un precio sin dejar rastro.
+create table if not exists public.historial_precios (
+  id              bigint generated always as identity primary key,
+  producto_id     bigint references public.productos (id) on delete set null,
+  codigo          text,
+  nombre          text not null,
+  precio_anterior numeric(14, 2),
+  precio_nuevo    numeric(14, 2) not null,
+  origen          text not null default 'edicion' check (origen in ('creacion', 'edicion', 'importacion')),
+  usuario         text not null default '',
+  creado_en       timestamptz not null default now()
+);
+
+create index if not exists historial_precios_creado_en on public.historial_precios (creado_en);
+create index if not exists historial_precios_producto on public.historial_precios (producto_id, creado_en desc);
 
 -- ---------------------------------------------------------------------
 -- Funciones
@@ -323,9 +348,97 @@ $$;
 
 -- Las funciones que siguen responden {ok: true, ...} o {ok: false, error, campo}.
 
--- Registra una venta y descuenta el inventario en un solo paso.
--- El vendedor se identifica con su código. Bloquea la fila del producto:
--- si dos vendedores venden la última unidad al mismo tiempo, solo una pasa.
+-- Registra una venta de uno o varios productos (carrito) en un solo paso:
+-- o se registra todo, o nada. p_items = [{"producto_id": 1, "cantidad": 2}, ...].
+-- El vendedor se identifica una vez con su código. Todas las líneas comparten
+-- el mismo número de venta (ticket). Los productos se bloquean en orden fijo:
+-- si dos vendedores venden la última unidad al mismo tiempo, solo uno la vende.
+create or replace function public.registrar_venta_multiple(p_items jsonb, p_codigo_vendedor text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_vendedor jsonb;
+  v_item     record;
+  v_producto public.productos;
+  v_venta    public.ventas;
+  v_ticket   bigint;
+  v_tasa     numeric;
+  v_lineas   jsonb := '[]'::jsonb;
+  v_total    numeric := 0;
+begin
+  if public.rol_actual() is null then
+    raise exception 'No tienes permiso para registrar ventas.' using errcode = '42501';
+  end if;
+  if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
+    return jsonb_build_object('ok', false, 'error', 'El carrito está vacío.');
+  end if;
+  if exists (select 1 from jsonb_to_recordset(p_items) as x(producto_id bigint, cantidad integer)
+             where x.producto_id is null or x.cantidad is null or x.cantidad < 1) then
+    return jsonb_build_object('ok', false, 'error', 'Cada producto debe tener una cantidad de 1 o más.', 'campo', 'cantidad');
+  end if;
+
+  v_vendedor := public.identificar_vendedor(p_codigo_vendedor);
+  if v_vendedor ? 'error' then
+    return jsonb_build_object('ok', false, 'error', v_vendedor ->> 'error', 'campo', 'codigo');
+  end if;
+
+  -- 1) Bloquear y revisar todos los productos antes de tocar nada.
+  for v_item in
+    select producto_id, sum(cantidad)::integer as cantidad
+    from jsonb_to_recordset(p_items) as x(producto_id bigint, cantidad integer)
+    group by producto_id order by producto_id
+  loop
+    select * into v_producto from public.productos where id = v_item.producto_id for update;
+    if not found then
+      return jsonb_build_object('ok', false, 'producto_id', v_item.producto_id,
+        'error', 'Un producto del carrito ya no existe. Quítalo e intenta de nuevo.');
+    end if;
+    if v_producto.cantidad < v_item.cantidad then
+      return jsonb_build_object('ok', false, 'campo', 'cantidad', 'producto_id', v_producto.id, 'stock', v_producto.cantidad,
+        'error', format('No hay suficientes unidades de %s: solo quedan %s.', v_producto.nombre, v_producto.cantidad));
+    end if;
+  end loop;
+
+  -- 2) Registrar cada línea con el mismo número de venta.
+  v_ticket := nextval('public.ventas_ticket_seq');
+  v_tasa := (select tasa_usd from public.configuracion where id = 1);
+  for v_item in
+    select producto_id, sum(cantidad)::integer as cantidad
+    from jsonb_to_recordset(p_items) as x(producto_id bigint, cantidad integer)
+    group by producto_id order by producto_id
+  loop
+    select * into v_producto from public.productos where id = v_item.producto_id;
+    update public.productos set cantidad = cantidad - v_item.cantidad where id = v_producto.id;
+
+    insert into public.ventas
+      (ticket, producto_id, codigo, nombre, cantidad, precio_unitario, total, tasa_usd, vendedor, vendedor_id, vendido_por)
+    values (
+      v_ticket, v_producto.id, v_producto.codigo, v_producto.nombre, v_item.cantidad, v_producto.precio_cop,
+      v_producto.precio_cop * v_item.cantidad, v_tasa,
+      v_vendedor ->> 'nombre', (v_vendedor ->> 'id')::bigint, auth.uid()
+    )
+    returning * into v_venta;
+
+    insert into public.movimientos
+      (producto_id, codigo, nombre, tipo, cantidad, stock_antes, stock_despues, venta_id, usuario, vendedor)
+    values (
+      v_producto.id, v_producto.codigo, v_producto.nombre, 'venta', v_item.cantidad,
+      v_producto.cantidad, v_producto.cantidad - v_item.cantidad, v_venta.id, public.usuario_actual(), v_venta.vendedor
+    );
+
+    v_lineas := v_lineas || to_jsonb(v_venta);
+    v_total := v_total + v_venta.total;
+  end loop;
+
+  return jsonb_build_object('ok', true, 'ticket', v_ticket, 'vendedor', v_vendedor ->> 'nombre',
+                            'total', v_total, 'lineas', v_lineas);
+end
+$$;
+
+-- Venta de un solo producto (atajo de la anterior).
 drop function if exists public.registrar_venta(bigint, integer);
 create or replace function public.registrar_venta(p_producto_id bigint, p_cantidad integer, p_codigo_vendedor text)
 returns jsonb
@@ -334,51 +447,14 @@ security definer
 set search_path = ''
 as $$
 declare
-  v_vendedor jsonb;
-  v_producto public.productos;
-  v_venta    public.ventas;
+  r jsonb;
 begin
-  if public.rol_actual() is null then
-    raise exception 'No tienes permiso para registrar ventas.' using errcode = '42501';
+  r := public.registrar_venta_multiple(
+    jsonb_build_array(jsonb_build_object('producto_id', p_producto_id, 'cantidad', p_cantidad)), p_codigo_vendedor);
+  if (r ->> 'ok')::boolean then
+    return jsonb_build_object('ok', true, 'venta', r -> 'lineas' -> 0);
   end if;
-  if p_cantidad is null or p_cantidad < 1 then
-    return jsonb_build_object('ok', false, 'error', 'La cantidad debe ser 1 o más.', 'campo', 'cantidad');
-  end if;
-
-  v_vendedor := public.identificar_vendedor(p_codigo_vendedor);
-  if v_vendedor ? 'error' then
-    return jsonb_build_object('ok', false, 'error', v_vendedor ->> 'error', 'campo', 'codigo');
-  end if;
-
-  select * into v_producto from public.productos where id = p_producto_id for update;
-  if not found then
-    return jsonb_build_object('ok', false, 'error', 'El producto ya no existe.');
-  end if;
-  if v_producto.cantidad < p_cantidad then
-    return jsonb_build_object('ok', false, 'campo', 'cantidad', 'stock', v_producto.cantidad,
-      'error', format('No hay suficientes unidades: solo quedan %s.', v_producto.cantidad));
-  end if;
-
-  update public.productos set cantidad = cantidad - p_cantidad where id = p_producto_id;
-
-  insert into public.ventas
-    (producto_id, codigo, nombre, cantidad, precio_unitario, total, tasa_usd, vendedor, vendedor_id, vendido_por)
-  values (
-    v_producto.id, v_producto.codigo, v_producto.nombre, p_cantidad, v_producto.precio_cop,
-    v_producto.precio_cop * p_cantidad,
-    (select tasa_usd from public.configuracion where id = 1),
-    v_vendedor ->> 'nombre', (v_vendedor ->> 'id')::bigint, auth.uid()
-  )
-  returning * into v_venta;
-
-  insert into public.movimientos
-    (producto_id, codigo, nombre, tipo, cantidad, stock_antes, stock_despues, venta_id, usuario, vendedor)
-  values (
-    v_producto.id, v_producto.codigo, v_producto.nombre, 'venta', p_cantidad,
-    v_producto.cantidad, v_producto.cantidad - p_cantidad, v_venta.id, public.usuario_actual(), v_venta.vendedor
-  );
-
-  return jsonb_build_object('ok', true, 'venta', to_jsonb(v_venta));
+  return r;
 end
 $$;
 
@@ -488,6 +564,223 @@ end
 $$;
 
 -- ---------------------------------------------------------------------
+-- Productos: crear, editar e importar (todo pasa por estas funciones)
+-- ---------------------------------------------------------------------
+
+-- Anota cada precio nuevo o cambiado en historial_precios.
+-- La importación marca su origen con set_config('app.origen', 'importacion').
+create or replace function public.anotar_cambio_precio()
+returns trigger
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  if tg_op = 'INSERT' or new.precio_cop is distinct from old.precio_cop then
+    insert into public.historial_precios (producto_id, codigo, nombre, precio_anterior, precio_nuevo, origen, usuario)
+    values (
+      new.id, new.codigo, new.nombre,
+      case when tg_op = 'UPDATE' then old.precio_cop end,
+      new.precio_cop,
+      coalesce(nullif(current_setting('app.origen', true), ''),
+               case when tg_op = 'INSERT' then 'creacion' else 'edicion' end),
+      public.usuario_actual()
+    );
+  end if;
+  return null;
+end
+$$;
+
+drop trigger if exists productos_historial_precio on public.productos;
+create trigger productos_historial_precio
+  after insert or update of precio_cop on public.productos
+  for each row execute function public.anotar_cambio_precio();
+
+-- Crea (p_id null) o edita un producto. La cantidad no se toca aquí.
+-- Si cambia el precio y la configuración lo exige, el administrador necesita
+-- la clave del jefe (el jefe no).
+create or replace function public.guardar_producto(
+  p_id bigint, p_codigo text, p_nombre text, p_descripcion text, p_precio numeric, p_clave_jefe text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_codigo text := upper(trim(coalesce(p_codigo, '')));
+  v_actual public.productos;
+  v_prod   public.productos;
+  v_error  text;
+begin
+  if coalesce(public.rol_actual(), '') not in ('admin', 'jefe') then
+    raise exception 'Solo el administrador o el jefe modifican productos.' using errcode = '42501';
+  end if;
+  if v_codigo = '' then
+    return jsonb_build_object('ok', false, 'error', 'El código es obligatorio.', 'campo', 'codigo');
+  end if;
+  if trim(coalesce(p_nombre, '')) = '' then
+    return jsonb_build_object('ok', false, 'error', 'El nombre es obligatorio.', 'campo', 'nombre');
+  end if;
+  if p_precio is null or p_precio < 0 then
+    return jsonb_build_object('ok', false, 'error', 'Escribe un precio válido en pesos.', 'campo', 'precio');
+  end if;
+
+  if p_id is not null then
+    select * into v_actual from public.productos where id = p_id for update;
+    if not found then
+      return jsonb_build_object('ok', false, 'error', 'El producto ya no existe.');
+    end if;
+    if v_actual.precio_cop is distinct from p_precio
+       and (select precio_requiere_clave from public.configuracion where id = 1) then
+      v_error := public.autorizar_con_clave_jefe(p_clave_jefe);
+      if v_error is not null then
+        return jsonb_build_object('ok', false, 'error', v_error, 'campo', 'clave');
+      end if;
+    end if;
+  end if;
+
+  begin
+    if p_id is null then
+      insert into public.productos (codigo, nombre, descripcion, precio_cop)
+      values (v_codigo, trim(p_nombre), trim(coalesce(p_descripcion, '')), p_precio)
+      returning * into v_prod;
+    else
+      update public.productos
+      set codigo = v_codigo, nombre = trim(p_nombre), descripcion = trim(coalesce(p_descripcion, '')), precio_cop = p_precio
+      where id = p_id
+      returning * into v_prod;
+    end if;
+  exception when unique_violation then
+    return jsonb_build_object('ok', false, 'campo', 'codigo', 'error', format('Ya existe otro producto con el código %s.', v_codigo));
+  end;
+
+  return jsonb_build_object('ok', true, 'producto', to_jsonb(v_prod));
+end
+$$;
+
+-- Importa productos desde Excel en un solo paso (todo o nada).
+-- p_filas = [{"fila", "codigo", "nombre", "descripcion", "cantidad", "precio"}, ...]
+-- Por código: si no existe se crea; si existe se actualiza. Una celda vacía
+-- conserva el valor actual. p_modo: 'reemplazar' = la cantidad del archivo es la
+-- existencia total; 'sumar' = son unidades que llegan. Cada cambio de cantidad
+-- queda como entrada/salida y cada cambio de precio en el historial.
+-- El administrador necesita la clave del jefe (una sola vez para todo el archivo).
+create or replace function public.importar_productos(p_filas jsonb, p_modo text, p_clave_jefe text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_error      text;
+  v_errores    jsonb;
+  v_fila       record;
+  v_prod       public.productos;
+  v_nuevo      integer;
+  v_creados    integer := 0;
+  v_cambiados  integer := 0;
+  v_iguales    integer := 0;
+  v_movs       integer := 0;
+begin
+  if coalesce(public.rol_actual(), '') not in ('admin', 'jefe') then
+    raise exception 'Solo el administrador o el jefe importan productos.' using errcode = '42501';
+  end if;
+  if p_modo is null or p_modo not in ('reemplazar', 'sumar') then
+    return jsonb_build_object('ok', false, 'error', 'Elige qué significa la cantidad del archivo.', 'campo', 'modo');
+  end if;
+  if p_filas is null or jsonb_typeof(p_filas) <> 'array' or jsonb_array_length(p_filas) = 0 then
+    return jsonb_build_object('ok', false, 'error', 'El archivo no tiene productos.');
+  end if;
+  if jsonb_array_length(p_filas) > 5000 then
+    return jsonb_build_object('ok', false, 'error', 'Máximo 5.000 productos por archivo.');
+  end if;
+
+  -- Revisar todo el archivo antes de tocar nada.
+  select coalesce(jsonb_agg(jsonb_build_object('fila', fila, 'error', error) order by fila), '[]'::jsonb)
+  into v_errores
+  from (
+    select x.fila,
+      case
+        when upper(trim(coalesce(x.codigo, ''))) = '' then 'Falta el código.'
+        when count(*) over (partition by upper(trim(x.codigo))) > 1 then 'Código repetido en el archivo.'
+        when x.precio < 0 then 'Precio inválido.'
+        when x.cantidad < 0 then 'Cantidad inválida.'
+        when not exists (select 1 from public.productos p where p.codigo = upper(trim(x.codigo)))
+             and (trim(coalesce(x.nombre, '')) = '' or x.precio is null)
+          then 'Producto nuevo: faltan el nombre o el precio.'
+      end as error
+    from jsonb_to_recordset(p_filas) as x(fila integer, codigo text, nombre text, descripcion text, cantidad integer, precio numeric)
+  ) t
+  where error is not null;
+
+  if jsonb_array_length(v_errores) > 0 then
+    return jsonb_build_object('ok', false, 'errores', v_errores,
+      'error', format('Hay %s fila(s) con errores. Corrígelas en el archivo y vuelve a cargarlo.', jsonb_array_length(v_errores)));
+  end if;
+
+  v_error := public.autorizar_con_clave_jefe(p_clave_jefe);
+  if v_error is not null then
+    return jsonb_build_object('ok', false, 'error', v_error, 'campo', 'clave');
+  end if;
+
+  perform set_config('app.origen', 'importacion', true);
+
+  for v_fila in
+    select upper(trim(x.codigo)) as codigo, nullif(trim(x.nombre), '') as nombre,
+           nullif(trim(x.descripcion), '') as descripcion, x.cantidad, x.precio
+    from jsonb_to_recordset(p_filas) as x(fila integer, codigo text, nombre text, descripcion text, cantidad integer, precio numeric)
+    order by 1
+  loop
+    select * into v_prod from public.productos where codigo = v_fila.codigo for update;
+
+    if not found then
+      insert into public.productos (codigo, nombre, descripcion, precio_cop)
+      values (v_fila.codigo, v_fila.nombre, coalesce(v_fila.descripcion, ''), v_fila.precio)
+      returning * into v_prod;
+      v_creados := v_creados + 1;
+      v_nuevo := coalesce(v_fila.cantidad, 0);
+    else
+      v_nuevo := case
+        when v_fila.cantidad is null then v_prod.cantidad
+        when p_modo = 'sumar' then v_prod.cantidad + v_fila.cantidad
+        else v_fila.cantidad
+      end;
+      if (v_fila.nombre is not null and v_fila.nombre is distinct from v_prod.nombre)
+         or (v_fila.descripcion is not null and v_fila.descripcion is distinct from v_prod.descripcion)
+         or (v_fila.precio is not null and v_fila.precio is distinct from v_prod.precio_cop)
+         or v_nuevo <> v_prod.cantidad then
+        v_cambiados := v_cambiados + 1;
+      else
+        v_iguales := v_iguales + 1;
+      end if;
+      update public.productos
+      set nombre = coalesce(v_fila.nombre, nombre),
+          descripcion = coalesce(v_fila.descripcion, descripcion),
+          precio_cop = coalesce(v_fila.precio, precio_cop)
+      where id = v_prod.id;
+    end if;
+
+    if v_nuevo <> v_prod.cantidad then
+      update public.productos set cantidad = v_nuevo where id = v_prod.id;
+      insert into public.movimientos
+        (producto_id, codigo, nombre, tipo, cantidad, stock_antes, stock_despues, motivo, usuario)
+      values (
+        v_prod.id, v_prod.codigo, coalesce(v_fila.nombre, v_prod.nombre),
+        case when v_nuevo > v_prod.cantidad then 'entrada' else 'salida' end,
+        abs(v_nuevo - v_prod.cantidad), v_prod.cantidad, v_nuevo,
+        case when p_modo = 'sumar' then 'Importación desde Excel' else 'Importación desde Excel (ajuste de existencia)' end,
+        public.usuario_actual()
+      );
+      v_movs := v_movs + 1;
+    end if;
+  end loop;
+
+  return jsonb_build_object('ok', true, 'creados', v_creados, 'actualizados', v_cambiados,
+                            'sin_cambios', v_iguales, 'movimientos', v_movs);
+end
+$$;
+
+-- ---------------------------------------------------------------------
 -- Configuración: solo el usuario con rol "jefe"
 -- ---------------------------------------------------------------------
 
@@ -533,7 +826,8 @@ begin
   return jsonb_build_object(
     'ok', true,
     'vendedores', public.lista_vendedores(),
-    'clave_definida', (select clave_jefe_hash is not null from public.seguridad where id = 1)
+    'clave_definida', (select clave_jefe_hash is not null from public.seguridad where id = 1),
+    'precio_requiere_clave', (select precio_requiere_clave from public.configuracion where id = 1)
   );
 end
 $$;
@@ -584,6 +878,20 @@ begin
 end
 $$;
 
+-- ¿Cambiar un precio requiere la clave del jefe?
+create or replace function public.config_precio_requiere_clave(p_valor boolean)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.solo_jefe();
+  update public.configuracion set precio_requiere_clave = coalesce(p_valor, true) where id = 1;
+  return jsonb_build_object('ok', true, 'precio_requiere_clave', coalesce(p_valor, true));
+end
+$$;
+
 -- Define o cambia la clave del jefe (la que autoriza al administrador).
 -- El jefe ya inició sesión con su usuario, así que no se le pide la anterior.
 create or replace function public.config_definir_clave_jefe(p_clave_nueva text)
@@ -610,17 +918,17 @@ $$;
 -- ---------------------------------------------------------------------
 
 revoke all on public.perfiles, public.productos, public.configuracion, public.ventas,
-              public.seguridad, public.vendedores, public.movimientos from anon, authenticated;
+              public.seguridad, public.vendedores, public.movimientos, public.historial_precios from anon, authenticated;
+revoke all on sequence public.ventas_ticket_seq from anon, authenticated;
 
 grant select on public.perfiles to authenticated;
--- La cantidad NO se puede escribir directamente: solo con ventas, anulaciones,
--- entradas y salidas (las funciones de arriba). Un producto nuevo empieza en 0.
+-- Los productos no se escriben directamente: se crean y editan con guardar_producto
+-- e importar_productos, y la cantidad solo cambia con ventas, anulaciones, entradas
+-- y salidas. Así cada precio queda en el historial y se respeta la clave del jefe.
 grant select, delete on public.productos to authenticated;
-grant insert (codigo, nombre, descripcion, precio_cop) on public.productos to authenticated;
-grant update (codigo, nombre, descripcion, precio_cop) on public.productos to authenticated;
 grant select on public.configuracion to authenticated;
 grant update (tasa_usd) on public.configuracion to authenticated;
-grant select on public.ventas, public.movimientos to authenticated;
+grant select on public.ventas, public.movimientos, public.historial_precios to authenticated;
 -- seguridad y vendedores: sin ningún permiso (solo las funciones las usan).
 
 -- Funciones internas: nadie las llama directamente.
@@ -631,6 +939,7 @@ revoke execute on function public.codigo_vendedor_en_uso(text, bigint) from publ
 revoke execute on function public.lista_vendedores() from public, anon, authenticated;
 revoke execute on function public.autorizar_con_clave_jefe(text) from public, anon, authenticated;
 revoke execute on function public.solo_jefe() from public, anon, authenticated;
+revoke execute on function public.anotar_cambio_precio() from public, anon, authenticated;
 
 -- Funciones que usa la app (solo con sesión iniciada; cada una revisa el rol).
 revoke execute on function public.rol_actual() from public, anon;
@@ -641,6 +950,10 @@ revoke execute on function public.registrar_movimiento(bigint, text, integer, te
 revoke execute on function public.config_estado() from public, anon;
 revoke execute on function public.config_guardar_vendedor(bigint, text, text, boolean) from public, anon;
 revoke execute on function public.config_definir_clave_jefe(text) from public, anon;
+revoke execute on function public.config_precio_requiere_clave(boolean) from public, anon;
+revoke execute on function public.registrar_venta_multiple(jsonb, text) from public, anon;
+revoke execute on function public.guardar_producto(bigint, text, text, text, numeric, text) from public, anon;
+revoke execute on function public.importar_productos(jsonb, text, text) from public, anon;
 grant execute on function public.rol_actual() to authenticated;
 grant execute on function public.buscar_productos(text) to authenticated;
 grant execute on function public.registrar_venta(bigint, integer, text) to authenticated;
@@ -649,6 +962,10 @@ grant execute on function public.registrar_movimiento(bigint, text, integer, tex
 grant execute on function public.config_estado() to authenticated;
 grant execute on function public.config_guardar_vendedor(bigint, text, text, boolean) to authenticated;
 grant execute on function public.config_definir_clave_jefe(text) to authenticated;
+grant execute on function public.config_precio_requiere_clave(boolean) to authenticated;
+grant execute on function public.registrar_venta_multiple(jsonb, text) to authenticated;
+grant execute on function public.guardar_producto(bigint, text, text, text, numeric, text) to authenticated;
+grant execute on function public.importar_productos(jsonb, text, text) to authenticated;
 
 -- ---------------------------------------------------------------------
 -- Row Level Security
@@ -659,6 +976,7 @@ alter table public.productos     enable row level security;
 alter table public.configuracion enable row level security;
 alter table public.ventas        enable row level security;
 alter table public.movimientos   enable row level security;
+alter table public.historial_precios enable row level security;
 alter table public.seguridad     enable row level security;   -- sin políticas: nadie la lee
 alter table public.vendedores    enable row level security;   -- sin políticas: nadie la lee
 
@@ -666,6 +984,11 @@ alter table public.vendedores    enable row level security;   -- sin políticas:
 -- ni borra directamente: se usan las funciones de arriba.
 drop policy if exists "ver ventas" on public.ventas;
 create policy "ver ventas" on public.ventas
+  for select to authenticated
+  using ((select public.rol_actual()) in ('admin', 'jefe'));
+
+drop policy if exists "ver historial de precios" on public.historial_precios;
+create policy "ver historial de precios" on public.historial_precios
   for select to authenticated
   using ((select public.rol_actual()) in ('admin', 'jefe'));
 

@@ -11,6 +11,8 @@
     tasa: null,       // pesos por 1 USD, o null si no está definida
     productos: [],
     busqueda: '',
+    carrito: new Map(),           // producto_id → { producto, cantidad }
+    precioRequiereClave: true,    // lo decide el jefe en Configuración
   };
 
   // ------------------------------------------------------------------
@@ -160,7 +162,12 @@
   // Al salir no debe quedar nada del usuario anterior en pantalla.
   db.auth.onAuthStateChange((evento) => {
     if (evento === 'SIGNED_OUT') {
-      Object.assign(estado, { perfil: null, tasa: null, productos: [], busqueda: '' });
+      Object.assign(estado, { perfil: null, tasa: null, productos: [], busqueda: '', carrito: new Map() });
+      // Respuestas que aún vengan en camino de la sesión anterior se descartan.
+      numeroConsulta++;
+      numeroCierre++;
+      $('#carrito-barra').hidden = true;
+      document.body.classList.remove('con-carrito');
       delete document.body.dataset.rol;
       document.querySelectorAll('dialog[open]').forEach((d) => d.close());
       $('#buscar').value = '';
@@ -193,11 +200,10 @@
 
     clearInterval(temporizadorCierre);
     if (nombre === 'cierre') {
-      if (!$('#cierre-fecha').value) $('#cierre-fecha').value = hoyEnZona();
       cargarCierre();
-      // Mientras el panel de hoy esté abierto, se actualiza solo cada minuto.
+      // Mientras el reporte incluya el día de hoy, se actualiza solo cada minuto.
       temporizadorCierre = setInterval(() => {
-        if (!document.hidden && $('#cierre-fecha').value === hoyEnZona()) cargarCierre();
+        if (!document.hidden && periodoReporte().hasta >= hoyEnZona()) cargarCierre();
       }, 60000);
     }
     if (nombre === 'configuracion') cargarConfiguracion();
@@ -213,10 +219,11 @@
 
   async function cargarTasa() {
     const { data, error } = await db
-      .from('configuracion').select('tasa_usd, actualizado_en').eq('id', 1).single();
+      .from('configuracion').select('tasa_usd, actualizado_en, precio_requiere_clave').eq('id', 1).single();
     if (error) { toast('No se pudo cargar la tasa del dólar.', 'error'); return; }
 
     estado.tasa = data.tasa_usd ? Number(data.tasa_usd) : null;
+    estado.precioRequiereClave = data.precio_requiere_clave !== false;
     $('#tasa-valor').textContent = estado.tasa ? `1 USD = ${fmtCOP.format(estado.tasa)}` : 'Sin definir';
     $('#tasa-fecha').textContent = estado.tasa
       ? `Actualizada: ${fmtFecha.format(new Date(data.actualizado_en))}`
@@ -277,7 +284,15 @@
     if (esta !== numeroConsulta) return;   // ya hay una búsqueda más reciente
     if (error) { toast('Error al buscar productos.', 'error'); return; }
     estado.productos = data;
-    pintarProductos();
+    // Lo que está en el carrito se actualiza con la existencia y el precio más recientes.
+    for (const p of data) {
+      const linea = estado.carrito.get(p.id);
+      if (!linea) continue;
+      linea.producto = p;
+      linea.cantidad = Math.min(linea.cantidad, p.cantidad);
+      if (linea.cantidad <= 0) estado.carrito.delete(p.id);
+    }
+    actualizarCarrito();
   }
 
   let temporizadorBusqueda;
@@ -315,9 +330,7 @@
       el('td', { class: 'num precio', 'data-label': 'Precio COP' }, fmtCOP.format(p.precio_cop)),
       el('td', { class: 'num precio precio-usd', 'data-label': 'Precio USD' }, enDolares(p.precio_cop)),
       el('td', { class: 'col-acciones' },
-        p.cantidad > 0
-          ? el('button', { type: 'button', class: 'btn btn-primario btn-sm btn-vender', onclick: () => abrirVenta(p) }, 'Vender')
-          : el('button', { type: 'button', class: 'btn btn-secundario btn-sm btn-vender', disabled: '' }, 'Agotado'),
+        botonAgregar(p),
         esAdmin ? el('button', { type: 'button', class: 'btn btn-secundario btn-sm', title: 'Entrada o salida de mercancía', onclick: () => abrirMovimiento(p) }, 'Entrada/Salida') : null,
         esAdmin ? el('button', { type: 'button', class: 'btn btn-secundario btn-sm', onclick: () => abrirProducto(p) }, 'Editar') : null),
     );
@@ -361,6 +374,27 @@
     $('#producto-vista').textContent = precio >= 0
       ? `Precio: ${fmtCOP.format(precio)} COP · ${estado.tasa ? `${enDolares(precio)} USD` : 'tasa del dólar sin definir'}`
       : '';
+    // Si el administrador cambia el precio de un producto existente y el jefe
+    // lo exige, aparece el campo de la clave.
+    $('#producto-clave').hidden = !(productoEditando && !esJefe() && estado.precioRequiereClave
+      && precio >= 0 && precio !== Number(productoEditando.precio_cop));
+  }
+
+  const ORIGEN_PRECIO = { creacion: 'al crearlo', edicion: 'editado', importacion: 'importación' };
+
+  async function cargarHistorialPrecio(p) {
+    const caja = $('#producto-historial');
+    caja.hidden = true;
+    const { data } = await db.from('historial_precios')
+      .select('precio_anterior, precio_nuevo, origen, usuario, creado_en')
+      .eq('producto_id', p.id).order('creado_en', { ascending: false }).limit(10);
+    if (productoEditando?.id !== p.id || !data?.length) return;
+    $('#producto-historial-lista').replaceChildren(...data.map((h) => el('li', {},
+      el('span', {}, fmtFecha.format(new Date(h.creado_en))),
+      el('span', {}, h.precio_anterior == null ? fmtCOP.format(h.precio_nuevo) : `${fmtCOP.format(h.precio_anterior)} → ${fmtCOP.format(h.precio_nuevo)}`),
+      el('span', { class: 'historial-quien' }, `${h.usuario || '—'} · ${ORIGEN_PRECIO[h.origen] || h.origen}`),
+    )));
+    caja.hidden = false;
   }
 
   function abrirProducto(p) {
@@ -379,6 +413,8 @@
       ? `Cantidad actual: ${fmtNumero.format(p.cantidad)}. Para cambiarla usa “Entrada/Salida” (requiere la clave del jefe).`
       : 'El producto se crea con 0 unidades. Después usa “Entrada/Salida” para cargar la mercancía (requiere la clave del jefe).';
     $('#btn-eliminar-producto').hidden = !p;
+    $('#producto-historial').hidden = true;
+    if (p) cargarHistorialPrecio(p);
     mostrarError('#producto-error', '');
     previsualizarPrecio();
     $('#dlg-producto').showModal();
@@ -403,19 +439,21 @@
     if (!(datos.precio_cop >= 0)) {
       return mostrarError('#producto-error', 'Escribe un precio válido en pesos. Ej: 150.000');
     }
+    const pideClave = !$('#producto-clave').hidden;
+    if (pideClave && !form.clave.value) {
+      form.clave.focus();
+      return mostrarError('#producto-error', 'Para cambiar el precio hace falta la clave del jefe.');
+    }
 
     conBotonOcupado(form, async () => {
-      const consulta = productoEditando
-        ? db.from('productos').update(datos).eq('id', productoEditando.id)
-        : db.from('productos').insert(datos);
-      const { data, error } = await consulta.select('id');
-
-      if (error?.code === '23505') {
-        mostrarError('#producto-error', `Ya existe otro producto con el código ${datos.codigo}.`);
-        return;
-      }
-      if (error || !data.length) {
-        mostrarError('#producto-error', error ? error.message : 'No tienes permiso para modificar productos.');
+      const r = await llamar('guardar_producto', {
+        p_id: productoEditando?.id ?? null, p_codigo: datos.codigo, p_nombre: datos.nombre,
+        p_descripcion: datos.descripcion, p_precio: datos.precio_cop, p_clave_jefe: pideClave ? form.clave.value : null,
+      });
+      form.clave.value = '';
+      if (!r.ok) {
+        mostrarError('#producto-error', r.error);
+        if (r.campo === 'clave') { $('#producto-clave').hidden = false; form.clave.focus(); }
         return;
       }
       $('#dlg-producto').close();
@@ -455,76 +493,127 @@
   });
 
   // ------------------------------------------------------------------
-  // Ventas: el vendedor marca un producto como vendido
+  // Carrito: se agregan varios productos y se cobran juntos
   // ------------------------------------------------------------------
 
-  let productoVendiendo = null;
-
-  function cantidadVenta() {
-    const n = Number($('#form-vender').cantidad.value);
-    return Number.isInteger(n) ? n : NaN;
+  function botonAgregar(p) {
+    const enCarrito = estado.carrito.get(p.id)?.cantidad || 0;
+    if (p.cantidad <= 0) {
+      return el('button', { type: 'button', class: 'btn btn-secundario btn-sm btn-vender', disabled: '' }, 'Agotado');
+    }
+    const lleno = enCarrito >= p.cantidad;
+    return el('button', {
+      type: 'button',
+      class: `btn btn-sm btn-vender ${enCarrito ? 'btn-en-carrito' : 'btn-primario'}`,
+      title: lleno ? 'Ya están en el carrito todas las unidades disponibles' : 'Agregar una unidad al carrito',
+      ...(lleno ? { disabled: '' } : {}),
+      onclick: () => agregarAlCarrito(p),
+    }, enCarrito ? `Agregar (${enCarrito})` : 'Agregar');
   }
 
-  function actualizarTotalVenta() {
-    const p = productoVendiendo;
-    const n = cantidadVenta();
-    const valida = n >= 1 && n <= p.cantidad;
-    $('#venta-unitario').textContent = fmtCOP.format(p.precio_cop);
-    $('#venta-total').textContent = valida ? fmtCOP.format(p.precio_cop * n) : '—';
-    $('#venta-total-usd').textContent = valida && estado.tasa ? enDolares(p.precio_cop * n) : '';
+  function agregarAlCarrito(p) {
+    const linea = estado.carrito.get(p.id) || { producto: p, cantidad: 0 };
+    if (linea.cantidad >= p.cantidad) return;
+    linea.producto = p;            // datos más recientes (precio, existencia)
+    linea.cantidad += 1;
+    estado.carrito.set(p.id, linea);
+    actualizarCarrito();
   }
 
-  function abrirVenta(p) {
-    productoVendiendo = p;
-    const form = $('#form-vender');
-    $('#venta-codigo').textContent = p.codigo || 'Sin código';
-    $('#venta-nombre').textContent = p.nombre;
-    $('#venta-disponible').textContent = `Disponibles: ${fmtNumero.format(p.cantidad)}`;
-    form.cantidad.max = p.cantidad;
-    form.cantidad.value = 1;
-    form.vendedor.value = '';
-    mostrarError('#vender-error', '');
-    actualizarTotalVenta();
-    $('#dlg-vender').showModal();
-    form.cantidad.select();
+  function totalCarrito() {
+    let total = 0;
+    for (const { producto, cantidad } of estado.carrito.values()) total += Number(producto.precio_cop) * cantidad;
+    return total;
   }
 
-  $('#form-vender').cantidad.addEventListener('input', actualizarTotalVenta);
+  // Repinta la barra, el diálogo (si está abierto) y los botones "Agregar".
+  function actualizarCarrito() {
+    const lineas = [...estado.carrito.values()];
+    const unidades = lineas.reduce((s, l) => s + l.cantidad, 0);
+    const total = totalCarrito();
 
-  document.querySelectorAll('#form-vender [data-paso]').forEach((boton) => {
-    boton.addEventListener('click', () => {
-      const actual = cantidadVenta() || 0;
-      const nueva = Math.min(Math.max(actual + Number(boton.dataset.paso), 1), productoVendiendo.cantidad);
-      $('#form-vender').cantidad.value = nueva;
-      actualizarTotalVenta();
-    });
+    $('#carrito-barra').hidden = lineas.length === 0;
+    document.body.classList.toggle('con-carrito', lineas.length > 0);
+    $('#carrito-conteo').textContent = `${unidades} ${unidades === 1 ? 'unidad' : 'unidades'} · ${lineas.length} ${lineas.length === 1 ? 'producto' : 'productos'}`;
+    $('#carrito-total-barra').textContent = fmtCOP.format(total);
+
+    $('#carrito-lineas').replaceChildren(...lineas.map(({ producto: p, cantidad }) => el('li', {},
+      el('div', { class: 'carrito-producto' },
+        p.codigo ? el('span', { class: 'codigo codigo-sm' }, p.codigo) : null,
+        el('div', { class: 'producto-nombre' }, p.nombre),
+        el('div', { class: 'carrito-precio' }, `${fmtCOP.format(p.precio_cop)} c/u · disponibles ${fmtNumero.format(p.cantidad)}`)),
+      el('div', { class: 'carrito-cantidad' },
+        el('button', { type: 'button', class: 'btn btn-secundario btn-sm', 'aria-label': 'Una unidad menos', onclick: () => cambiarCantidad(p.id, -1) }, '−'),
+        el('span', { class: 'carrito-n' }, fmtNumero.format(cantidad)),
+        el('button', { type: 'button', class: 'btn btn-secundario btn-sm', 'aria-label': 'Una unidad más', ...(cantidad >= p.cantidad ? { disabled: '' } : {}), onclick: () => cambiarCantidad(p.id, 1) }, '+')),
+      el('strong', { class: 'carrito-subtotal' }, fmtCOP.format(Number(p.precio_cop) * cantidad)),
+      el('button', { type: 'button', class: 'btn btn-peligro-suave btn-sm', 'aria-label': `Quitar ${p.nombre}`, onclick: () => cambiarCantidad(p.id, -Infinity) }, 'Quitar'),
+    )));
+    $('#carrito-total').textContent = fmtCOP.format(total);
+    $('#carrito-total-usd').textContent = estado.tasa && total ? enDolares(total) : '';
+
+    if (!lineas.length && $('#dlg-carrito').open) $('#dlg-carrito').close();
+    pintarProductos();   // actualiza los botones "Agregar (n)"
+  }
+
+  function cambiarCantidad(id, paso) {
+    const linea = estado.carrito.get(id);
+    if (!linea) return;
+    linea.cantidad = Math.min(linea.cantidad + paso, linea.producto.cantidad);
+    if (linea.cantidad <= 0) estado.carrito.delete(id);
+    actualizarCarrito();
+  }
+
+  function vaciarCarrito() {
+    estado.carrito.clear();
+    actualizarCarrito();
+  }
+
+  $('#btn-ver-carrito').addEventListener('click', () => {
+    $('#form-carrito').vendedor.value = '';
+    mostrarError('#carrito-error', '');
+    actualizarCarrito();
+    $('#dlg-carrito').showModal();
+    $('#form-carrito').vendedor.focus();
   });
 
-  $('#form-vender').addEventListener('submit', (e) => {
+  $('#btn-vaciar-carrito').addEventListener('click', vaciarCarrito);
+
+  $('#form-carrito').addEventListener('submit', (e) => {
     e.preventDefault();
-    const p = productoVendiendo;
-    const n = cantidadVenta();
     const form = e.currentTarget;
-    if (!(n >= 1)) return mostrarError('#vender-error', 'La cantidad debe ser un número entero, 1 o mayor.');
-    if (n > p.cantidad) return mostrarError('#vender-error', `Solo hay ${fmtNumero.format(p.cantidad)} disponibles.`);
+    if (!estado.carrito.size) return;
     if (!form.vendedor.value.trim()) {
       form.vendedor.focus();
-      return mostrarError('#vender-error', 'Escribe tu código de vendedor.');
+      return mostrarError('#carrito-error', 'Escribe tu código de vendedor.');
     }
 
     conBotonOcupado(form, async () => {
-      const r = await llamar('registrar_venta', {
-        p_producto_id: p.id, p_cantidad: n, p_codigo_vendedor: form.vendedor.value.trim(),
-      });
+      const items = [...estado.carrito.values()].map((l) => ({ producto_id: l.producto.id, cantidad: l.cantidad }));
+      const r = await llamar('registrar_venta_multiple', { p_items: items, p_codigo_vendedor: form.vendedor.value.trim() });
       if (!r.ok) {
-        mostrarError('#vender-error', r.error);
+        mostrarError('#carrito-error', r.error);
         if (r.campo === 'codigo') form.vendedor.select();
-        if (r.stock != null) buscar(estado.busqueda);   // alguien más vendió: refrescar
+        // Alguien más vendió o el producto cambió: ajustar el carrito a lo que hay.
+        if (r.producto_id != null) {
+          const linea = estado.carrito.get(r.producto_id);
+          if (linea && r.stock != null) {
+            linea.producto = { ...linea.producto, cantidad: r.stock };
+            linea.cantidad = Math.min(linea.cantidad, r.stock);
+            if (linea.cantidad <= 0) estado.carrito.delete(r.producto_id);
+          } else if (linea) {
+            estado.carrito.delete(r.producto_id);
+          }
+          actualizarCarrito();
+          buscar(estado.busqueda);
+        }
         return;
       }
-      const venta = r.venta;
-      $('#dlg-vender').close();
-      toast(`Venta registrada (${venta.vendedor}): ${venta.cantidad} × ${venta.nombre} · ${fmtCOP.format(venta.total)}`);
+      form.vendedor.value = '';
+      $('#dlg-carrito').close();
+      const n = r.lineas.length;
+      toast(`Venta #${r.ticket} registrada (${r.vendedor}): ${n} ${n === 1 ? 'producto' : 'productos'} · ${fmtCOP.format(r.total)}`);
+      vaciarCarrito();
       buscar(estado.busqueda);
       if (!$('#seccion-cierre').hidden) cargarCierre();
       // Listo para el siguiente cliente: el buscador queda seleccionado.
@@ -614,6 +703,153 @@
   });
 
   // ------------------------------------------------------------------
+  // Importar productos desde Excel (administrador con clave del jefe, o jefe)
+  // ------------------------------------------------------------------
+
+  let filasImportar = [];              // filas leídas del archivo
+  let inventarioImportar = new Map();  // código → producto actual
+
+  function modoImportar() {
+    return $('#form-importar').querySelector('[name="modo"]:checked')?.value || null;
+  }
+
+  function abrirImportar() {
+    const form = $('#form-importar');
+    form.reset();
+    filasImportar = [];
+    $('#importar-vista').hidden = true;
+    form.querySelector('[type="submit"]').disabled = true;
+    mostrarError('#importar-error', '');
+    $('#dlg-importar').showModal();
+  }
+
+  $('#btn-importar').addEventListener('click', abrirImportar);
+
+  $('#btn-plantilla').addEventListener('click', async (e) => {
+    const boton = e.currentTarget;
+    boton.disabled = true;
+    try {
+      const inventario = await traerTodo(() => db.from('productos')
+        .select('codigo, nombre, descripcion, cantidad, precio_cop').order('nombre'));
+      await window.Exportar.plantilla(inventario, hoyEnZona());
+    } catch (error) {
+      mostrarError('#importar-error', `No se pudo generar la plantilla: ${error.message}`);
+    } finally {
+      boton.disabled = false;
+    }
+  });
+
+  $('#importar-archivo').addEventListener('change', async (e) => {
+    const archivo = e.target.files[0];
+    filasImportar = [];
+    $('#importar-vista').hidden = true;
+    mostrarError('#importar-error', '');
+    if (!archivo) return previsualizarImportacion();
+    try {
+      const [filas, inventario] = await Promise.all([
+        window.Exportar.leerProductos(archivo),
+        traerTodo(() => db.from('productos').select('id, codigo, nombre, descripcion, cantidad, precio_cop')),
+      ]);
+      filasImportar = filas;
+      inventarioImportar = new Map(inventario.map((p) => [p.codigo, p]));
+    } catch (error) {
+      mostrarError('#importar-error', error.message);
+    }
+    previsualizarImportacion();
+  });
+
+  $('#form-importar').addEventListener('change', (e) => {
+    if (e.target.name === 'modo') previsualizarImportacion();
+  });
+
+  // Revisa cada fila igual que lo hará la base de datos y muestra qué va a pasar.
+  function previsualizarImportacion() {
+    const modo = modoImportar();
+    const repetidos = new Set();
+    const vistos = new Set();
+    for (const f of filasImportar) {
+      if (f.codigo && vistos.has(f.codigo)) repetidos.add(f.codigo);
+      vistos.add(f.codigo);
+    }
+
+    let nuevos = 0, cambios = 0, iguales = 0, errores = 0, comoExistencia = 0, existentes = 0;
+    const filasVista = filasImportar.map((f) => {
+      const actual = inventarioImportar.get(f.codigo);
+      let error = f.error;
+      if (!error && !f.codigo) error = 'Falta el código.';
+      if (!error && repetidos.has(f.codigo)) error = 'Código repetido en el archivo.';
+      if (!error && !actual && (!f.nombre || f.precio == null)) error = 'Producto nuevo: faltan el nombre o el precio.';
+
+      let resultado;
+      let clase = '';
+      if (error) {
+        errores++; resultado = error; clase = 'fila-error';
+      } else if (!actual) {
+        nuevos++; resultado = `Nuevo · ${fmtNumero.format(f.cantidad ?? 0)} unidades`; clase = 'fila-nueva';
+      } else {
+        existentes++;
+        if (f.cantidad != null && f.cantidad === actual.cantidad && f.cantidad > 0) comoExistencia++;
+        const partes = [];
+        if (f.nombre && f.nombre !== actual.nombre) partes.push('nombre');
+        if (f.descripcion && f.descripcion !== actual.descripcion) partes.push('descripción');
+        if (f.precio != null && f.precio !== Number(actual.precio_cop)) {
+          partes.push(`precio ${fmtCOP.format(actual.precio_cop)} → ${fmtCOP.format(f.precio)}`);
+        }
+        if (f.cantidad != null && modo) {
+          const nuevo = modo === 'sumar' ? actual.cantidad + f.cantidad : f.cantidad;
+          if (nuevo !== actual.cantidad) partes.push(`cantidad ${fmtNumero.format(actual.cantidad)} → ${fmtNumero.format(nuevo)}`);
+        }
+        if (partes.length) { cambios++; resultado = `Cambia ${partes.join(', ')}`; clase = 'fila-cambio'; } else { iguales++; resultado = 'Sin cambios'; }
+      }
+      return { f, resultado, clase };
+    });
+
+    $('#importar-filas').replaceChildren(...filasVista
+      .sort((a, b) => (b.clase === 'fila-error') - (a.clase === 'fila-error'))   // errores primero
+      .slice(0, 300)
+      .map(({ f, resultado, clase }) => el('tr', clase ? { class: clase } : {},
+        celda(String(f.fila)), celda(f.codigo || '—', 'nowrap'), celda(f.nombre || inventarioImportar.get(f.codigo)?.nombre || '—'),
+        celda(f.cantidad != null ? fmtNumero.format(f.cantidad) : '—', 'num'),
+        celda(f.precio != null ? fmtCOP.format(f.precio) : '—', 'num'),
+        celda(resultado))));
+
+    const total = filasImportar.length;
+    let resumen = `${total} ${total === 1 ? 'fila' : 'filas'}: ${nuevos} nuevos, ${cambios} con cambios, ${iguales} sin cambios`;
+    if (errores) resumen += `, ${errores} con errores (corrígelas en el archivo y vuelve a cargarlo)`;
+    if (total > 300) resumen += '. Se muestran las primeras 300.';
+    if (!modo && total) resumen += '. Elige qué significa la columna Cantidad.';
+    // Si se suman cantidades que parecen ser la existencia actual, se duplicaría el inventario.
+    if (modo === 'sumar' && existentes && comoExistencia / existentes >= 0.5) {
+      resumen += ' ⚠ Ojo: muchas cantidades son iguales a la existencia actual. Si el archivo trae la existencia total, elige "reemplaza"; con "se suman" el inventario se duplicaría.';
+    }
+    $('#importar-resumen').textContent = resumen;
+    $('#importar-vista').hidden = total === 0;
+    $('#form-importar').querySelector('[type="submit"]').disabled = !(total && modo && !errores && (nuevos || cambios));
+  }
+
+  $('#form-importar').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    if (!esJefe() && !form.clave.value) { form.clave.focus(); return mostrarError('#importar-error', 'Falta la clave del jefe.'); }
+
+    conBotonOcupado(form, async () => {
+      const filas = filasImportar.map(({ fila, codigo, nombre, descripcion, cantidad, precio }) =>
+        ({ fila, codigo, nombre, descripcion, cantidad, precio }));
+      const r = await llamar('importar_productos', { p_filas: filas, p_modo: modoImportar(), p_clave_jefe: form.clave.value || null });
+      form.clave.value = '';
+      if (!r.ok) {
+        const detalle = r.errores?.slice(0, 5).map((x) => `fila ${x.fila}: ${x.error}`).join(' · ');
+        mostrarError('#importar-error', detalle ? `${r.error} ${detalle}` : r.error);
+        return;
+      }
+      $('#dlg-importar').close();
+      toast(`Importación lista: ${r.creados} nuevos, ${r.actualizados} actualizados, ${r.sin_cambios} sin cambios`);
+      buscar(estado.busqueda);
+      if (!$('#seccion-cierre').hidden) cargarCierre();
+    });
+  });
+
+  // ------------------------------------------------------------------
   // Configuración (solo el jefe): vendedores y clave del jefe
   // ------------------------------------------------------------------
 
@@ -624,8 +860,19 @@
     if (!r.ok) { toast(`No se pudo cargar la configuración: ${r.error}`, 'error'); return; }
     pintarVendedores(r.vendedores);
     pintarEstadoClave(r.clave_definida);
+    $('#config-precio-clave').checked = r.precio_requiere_clave !== false;
     editarVendedor(null);
   }
+
+  $('#config-precio-clave').addEventListener('change', async (e) => {
+    const casilla = e.currentTarget;
+    casilla.disabled = true;
+    const r = await llamar('config_precio_requiere_clave', { p_valor: casilla.checked });
+    casilla.disabled = false;
+    if (!r.ok) { casilla.checked = !casilla.checked; toast(r.error, 'error'); return; }
+    estado.precioRequiereClave = r.precio_requiere_clave;
+    toast(r.precio_requiere_clave ? 'Cambiar precios ahora pide la clave del jefe' : 'Cambiar precios ya no pide la clave del jefe');
+  });
 
   function pintarEstadoClave(definida) {
     $('#clave-estado').textContent = definida
@@ -698,10 +945,10 @@
   });
 
   // ------------------------------------------------------------------
-  // Cierre del día (solo administrador)
+  // Reportes y cierre del día (administrador y jefe)
   // ------------------------------------------------------------------
 
-  let cierre = null;          // datos del día mostrado, también se usan para exportar
+  let cierre = null;          // datos del periodo mostrado, también se usan para exportar
   let numeroCierre = 0;
   let ventaAnulando = null;
 
@@ -716,10 +963,63 @@
     }
   }
 
-  function resumirCierre(fecha, ventas, porAgotarse, movimientos) {
+  // Aritmética de fechas "AAAA-MM-DD" (sin horas, así no influye la zona del equipo).
+  const aFecha = (texto) => new Date(`${texto}T00:00:00Z`);
+  const aTexto = (fecha) => fecha.toISOString().slice(0, 10);
+  const sumarDias = (texto, n) => aTexto(new Date(aFecha(texto).getTime() + n * 86400000));
+  const diaEnZona = (iso) => new Intl.DateTimeFormat('en-CA', { timeZone: ZONA }).format(new Date(iso));
+  const fmtDiaCorto = new Intl.DateTimeFormat('es-CO', { timeZone: 'UTC', weekday: 'short', day: 'numeric', month: 'short' });
+  const fmtFechaCorta = new Intl.DateTimeFormat('es-CO', { timeZone: 'UTC', day: 'numeric', month: 'short', year: 'numeric' });
+
+  // Periodo elegido → { desde, hasta } (ambos incluidos). La semana empieza el lunes.
+  function periodoReporte() {
+    const hoy = hoyEnZona();
+    const diaSemana = (aFecha(hoy).getUTCDay() + 6) % 7;   // lunes = 0
+    const [anio, mes] = hoy.split('-').map(Number);
+    const primeroMes = `${hoy.slice(0, 8)}01`;
+    switch ($('#reporte-periodo').value) {
+      case 'ayer': { const ayer = sumarDias(hoy, -1); return { desde: ayer, hasta: ayer }; }
+      case 'semana': return { desde: sumarDias(hoy, -diaSemana), hasta: hoy };
+      case 'semana-pasada': return { desde: sumarDias(hoy, -diaSemana - 7), hasta: sumarDias(hoy, -diaSemana - 1) };
+      case 'mes': return { desde: primeroMes, hasta: hoy };
+      case 'mes-pasado': {
+        const desde = aTexto(new Date(Date.UTC(anio, mes - 2, 1)));
+        return { desde, hasta: sumarDias(primeroMes, -1) };
+      }
+      case '7': return { desde: sumarDias(hoy, -6), hasta: hoy };
+      case '30': return { desde: sumarDias(hoy, -29), hasta: hoy };
+      case 'personalizado': {
+        let desde = $('#reporte-desde').value || hoy;
+        let hasta = $('#reporte-hasta').value || desde;
+        if (hasta < desde) [desde, hasta] = [hasta, desde];
+        return { desde, hasta };
+      }
+      default: return { desde: hoy, hasta: hoy };
+    }
+  }
+
+  // Al elegir "Personalizado" se muestran las fechas, empezando por el periodo actual.
+  $('#reporte-periodo').addEventListener('change', (e) => {
+    const personalizado = e.target.value === 'personalizado';
+    if (personalizado && cierre) {
+      $('#reporte-desde').value = cierre.desde;
+      $('#reporte-hasta').value = cierre.hasta;
+    }
+    $('#reporte-fechas').hidden = !personalizado;
+    cargarCierre();
+  });
+  $('#reporte-desde').addEventListener('change', cargarCierre);
+  $('#reporte-hasta').addEventListener('change', cargarCierre);
+  $('#btn-actualizar').addEventListener('click', cargarCierre);
+
+  // Las líneas de una misma venta (carrito) comparten número; las antiguas cuentan solas.
+  const numeroVenta = (v) => v.ticket ?? `L${v.id}`;
+
+  function resumirCierre({ desde, hasta }, ventas, porAgotarse, movimientos, cambiosPrecio) {
     const validas = ventas.filter((v) => !v.anulada_en);
     const porProducto = new Map();
     const porVendedor = new Map();
+    const porDia = new Map();
     for (const v of validas) {
       const clave = v.producto_id ?? `${v.codigo}|${v.nombre}`;
       const fila = porProducto.get(clave) || { codigo: v.codigo, nombre: v.nombre, unidades: 0, total: 0 };
@@ -727,18 +1027,32 @@
       fila.total += Number(v.total);
       porProducto.set(clave, fila);
 
-      const nombre = v.vendedor || 'Sin vendedor';
-      const vend = porVendedor.get(nombre) || { vendedor: nombre, ventas: 0, unidades: 0, total: 0 };
-      vend.ventas += 1;
-      vend.unidades += v.cantidad;
-      vend.total += Number(v.total);
-      porVendedor.set(nombre, vend);
+      for (const [mapa, llave, base] of [
+        [porVendedor, v.vendedor || 'Sin vendedor', { vendedor: v.vendedor || 'Sin vendedor' }],
+        [porDia, diaEnZona(v.vendido_en), { fecha: diaEnZona(v.vendido_en) }],
+      ]) {
+        const g = mapa.get(llave) || { ...base, tickets: new Set(), unidades: 0, total: 0 };
+        g.tickets.add(numeroVenta(v));
+        g.unidades += v.cantidad;
+        g.total += Number(v.total);
+        mapa.set(llave, g);
+      }
     }
+    const conVentas = (g) => ({ ...g, ventas: g.tickets.size, tickets: undefined });
     const totalCOP = validas.reduce((s, v) => s + Number(v.total), 0);
     const conTasa = validas.filter((v) => v.tasa_usd);
+    const unDia = desde === hasta;
+    const dias = Math.round((aFecha(hasta) - aFecha(desde)) / 86400000) + 1;
     return {
-      fecha,
-      fechaLarga: fmtDiaLargo.format(new Date(`${fecha}T00:00:00Z`)),
+      desde,
+      hasta,
+      unDia,
+      dias,
+      fecha: desde,
+      fechaLarga: fmtDiaLargo.format(aFecha(desde)),
+      periodoTexto: unDia
+        ? fmtDiaLargo.format(aFecha(desde))
+        : `del ${fmtFechaCorta.format(aFecha(desde))} al ${fmtFechaCorta.format(aFecha(hasta))} (${dias} días)`,
       generadoEn: new Date(),
       generadoPor: $('#usuario-nombre').textContent,
       ventas,
@@ -746,12 +1060,14 @@
       // Cada venta se convierte con la tasa que había cuando se hizo.
       totalUSD: conTasa.length ? conTasa.reduce((s, v) => s + Number(v.total) / Number(v.tasa_usd), 0) : null,
       ventasSinTasa: validas.length - conTasa.length,
-      numVentas: validas.length,
+      numVentas: new Set(validas.map(numeroVenta)).size,
       numAnuladas: ventas.length - validas.length,
       unidades: validas.reduce((s, v) => s + v.cantidad, 0),
       porProducto: [...porProducto.values()].sort((a, b) => b.unidades - a.unidades || b.total - a.total),
-      porVendedor: [...porVendedor.values()].sort((a, b) => b.total - a.total),
-      movimientos,   // entradas, salidas y anulaciones del día (las ventas ya están arriba)
+      porVendedor: [...porVendedor.values()].map(conVentas).sort((a, b) => b.total - a.total),
+      porDia: [...porDia.values()].map(conVentas).sort((a, b) => a.fecha.localeCompare(b.fecha)),
+      movimientos,      // entradas, salidas y anulaciones (las ventas ya están arriba)
+      cambiosPrecio,
       porAgotarse,
       stockBajo: STOCK_BAJO,
       tasaActual: estado.tasa,
@@ -759,26 +1075,29 @@
   }
 
   async function cargarCierre() {
-    const fecha = $('#cierre-fecha').value || hoyEnZona();
-    const [inicio, fin] = rangoDelDia(fecha);
+    const periodo = periodoReporte();
+    const [inicio] = rangoDelDia(periodo.desde);
+    const [, fin] = rangoDelDia(periodo.hasta);
     const esta = ++numeroCierre;
     $('#cierre-subtitulo').textContent = 'Cargando…';
     try {
-      const [ventas, porAgotarse, movimientos] = await Promise.all([
+      const [ventas, porAgotarse, movimientos, cambiosPrecio] = await Promise.all([
         traerTodo(() => db.from('ventas').select('*')
-          .gte('vendido_en', inicio).lt('vendido_en', fin).order('vendido_en', { ascending: false })),
+          .gte('vendido_en', inicio).lt('vendido_en', fin).order('vendido_en', { ascending: false }).order('id')),
         traerTodo(() => db.from('productos').select('id, codigo, nombre, cantidad')
           .lte('cantidad', STOCK_BAJO).order('cantidad').order('nombre')),
         traerTodo(() => db.from('movimientos').select('*').neq('tipo', 'venta')
           .gte('creado_en', inicio).lt('creado_en', fin).order('creado_en', { ascending: false })),
+        traerTodo(() => db.from('historial_precios').select('*').neq('origen', 'creacion')
+          .gte('creado_en', inicio).lt('creado_en', fin).order('creado_en', { ascending: false })),
       ]);
-      if (esta !== numeroCierre) return;   // se pidió otra fecha mientras tanto
-      cierre = resumirCierre(fecha, ventas, porAgotarse, movimientos);
+      if (esta !== numeroCierre) return;   // se pidió otro periodo mientras tanto
+      cierre = resumirCierre(periodo, ventas, porAgotarse, movimientos, cambiosPrecio);
       pintarCierre();
     } catch (error) {
       if (esta !== numeroCierre) return;
       $('#cierre-subtitulo').textContent = '';
-      toast(`No se pudo cargar el cierre: ${error.message}`, 'error');
+      toast(`No se pudo cargar el reporte: ${error.message}`, 'error');
     }
   }
 
@@ -788,15 +1107,20 @@
 
   function pintarCierre() {
     const c = cierre;
-    const esHoy = c.fecha === hoyEnZona();
+    const hoy = hoyEnZona();
+    // Un solo día: hora. Varios días: día y hora.
+    const cuando = (iso) => (c.unDia ? fmtHora.format(new Date(iso))
+      : `${fmtDiaCorto.format(aFecha(diaEnZona(iso)))} ${fmtHora.format(new Date(iso))}`);
+
+    $('#cierre-titulo').textContent = c.unDia ? 'Cierre del día' : 'Reporte de ventas';
     $('#cierre-subtitulo').textContent =
-      `${c.fechaLarga}${esHoy ? ' (hoy)' : ''} · actualizado ${fmtHora.format(c.generadoEn)}`;
+      `${c.periodoTexto}${c.unDia && c.desde === hoy ? ' (hoy)' : ''} · actualizado ${fmtHora.format(c.generadoEn)}`;
 
     $('#kpi-total').textContent = fmtCOP.format(c.totalCOP);
     $('#kpi-total-usd').textContent = c.totalUSD != null ? `≈ ${fmtUSD.format(c.totalUSD)}` : '';
     $('#kpi-ventas').textContent = fmtNumero.format(c.numVentas);
     $('#kpi-anuladas').textContent = c.numAnuladas
-      ? `${c.numAnuladas} ${c.numAnuladas === 1 ? 'anulada' : 'anuladas'}` : 'Ninguna anulada';
+      ? `${c.numAnuladas} ${c.numAnuladas === 1 ? 'línea anulada' : 'líneas anuladas'}` : 'Ninguna anulada';
     $('#kpi-unidades').textContent = fmtNumero.format(c.unidades);
     $('#kpi-productos').textContent = c.porProducto.length === 1
       ? 'De 1 producto' : `De ${c.porProducto.length} productos`;
@@ -804,6 +1128,14 @@
     $('#kpi-agotarse').textContent = fmtNumero.format(c.porAgotarse.length);
     $('#kpi-agotados').textContent = agotados ? `${agotados} ya ${agotados === 1 ? 'agotado' : 'agotados'}` : 'Ninguno agotado';
     $('#umbral-agotarse').textContent = fmtNumero.format(c.stockBajo);
+
+    $('#tarjeta-por-dia').hidden = c.unDia;
+    $('#tabla-por-dia').replaceChildren(...c.porDia.map((d) => el('tr', {},
+      celda(fmtDiaLargo.format(aFecha(d.fecha))),
+      celda(fmtNumero.format(d.ventas), 'num'),
+      celda(fmtNumero.format(d.unidades), 'num'),
+      celda(fmtCOP.format(d.total), 'num'),
+    )));
 
     $('#tabla-top').replaceChildren(...c.porProducto.map((p) => el('tr', {},
       celda(p.codigo ? el('span', { class: 'codigo codigo-sm' }, p.codigo) : '—'),
@@ -822,12 +1154,21 @@
     $('#vacio-vendedores').hidden = c.porVendedor.length > 0;
 
     $('#tabla-movimientos').replaceChildren(...c.movimientos.map((m) => el('tr', {},
-      celda(fmtHora.format(new Date(m.creado_en)), 'nowrap'),
+      celda(cuando(m.creado_en), 'nowrap'),
       celda(el('div', {}, m.codigo ? el('span', { class: 'codigo codigo-sm' }, m.codigo) : null, ` ${m.nombre}`)),
       celda(el('span', { class: `mov mov-${m.tipo}` }, `${m.tipo === 'salida' ? '−' : '+'}${fmtNumero.format(m.cantidad)}`), 'num'),
       celda(`${m.tipo === 'anulacion' ? 'Venta anulada' : m.motivo} · ${m.stock_antes ?? '—'} → ${m.stock_despues ?? '—'}`),
     )));
     $('#vacio-movimientos').hidden = c.movimientos.length > 0;
+
+    $('#tabla-precios').replaceChildren(...c.cambiosPrecio.map((h) => el('tr', {},
+      celda(cuando(h.creado_en), 'nowrap'),
+      celda(el('div', {}, h.codigo ? el('span', { class: 'codigo codigo-sm' }, h.codigo) : null, ` ${h.nombre}`)),
+      celda(h.precio_anterior == null ? '—' : fmtCOP.format(h.precio_anterior), 'num'),
+      celda(el('strong', {}, fmtCOP.format(h.precio_nuevo)), 'num'),
+      celda(`${h.usuario || '—'}${h.origen === 'importacion' ? ' (Excel)' : ''}`),
+    )));
+    $('#vacio-precios').hidden = c.cambiosPrecio.length > 0;
 
     $('#tabla-agotarse').replaceChildren(...c.porAgotarse.map((p) => el('tr', {},
       celda(p.codigo ? el('span', { class: 'codigo codigo-sm' }, p.codigo) : '—'),
@@ -837,7 +1178,8 @@
     $('#vacio-agotarse').hidden = c.porAgotarse.length > 0;
 
     $('#tabla-ventas').replaceChildren(...c.ventas.map((v) => el('tr', v.anulada_en ? { class: 'anulada' } : {},
-      celda(fmtHora.format(new Date(v.vendido_en)), 'nowrap'),
+      celda(v.ticket ? `#${v.ticket}` : '—', 'nowrap'),
+      celda(cuando(v.vendido_en), 'nowrap'),
       celda(v.codigo ? el('span', { class: 'codigo codigo-sm' }, v.codigo) : '—'),
       celda(v.nombre),
       celda(fmtNumero.format(v.cantidad), 'num'),
@@ -851,14 +1193,11 @@
     $('#vacio-ventas').hidden = c.ventas.length > 0;
   }
 
-  $('#cierre-fecha').addEventListener('change', cargarCierre);
-  $('#btn-actualizar').addEventListener('click', cargarCierre);
-
   function abrirAnular(v) {
     ventaAnulando = v;
     $('#form-anular').reset();
     mostrarError('#anular-error', '');
-    $('#anular-detalle').textContent = `${v.cantidad} × ${v.nombre} (${fmtCOP.format(v.total)}) de las ${fmtHora.format(new Date(v.vendido_en))}`;
+    $('#anular-detalle').textContent = `${v.cantidad} × ${v.nombre} (${fmtCOP.format(v.total)})${v.ticket ? ` de la venta #${v.ticket}` : ''}, ${fmtFecha.format(new Date(v.vendido_en))}`;
     $('#dlg-anular').showModal();
     // El jefe no teclea clave (con su usuario ya está autorizado).
     (esJefe() ? $('#form-anular [type="submit"]') : $('#form-anular').clave).focus();

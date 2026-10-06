@@ -9,13 +9,15 @@ Precios en **pesos colombianos (COP)** con su equivalente en **dólares (USD)** 
 |----------------------------------------------------|:-------------:|:-------------:|:-------------------:|
 | Buscar productos por código o nombre               | ✅            | ✅            | ✅                  |
 | Ver código, nombre, descripción, cantidad, precio COP y USD | ✅   | ✅            | ✅                  |
-| Vender (con el **código del vendedor**)            | ✅            | ✅            | ✅                  |
-| Crear y editar productos (código, nombre, descripción, precio) | ✅ | ✅          | ❌                  |
+| Vender con carrito (con el **código del vendedor**) | ✅            | ✅            | ✅                  |
+| Crear y editar productos (código, nombre, descripción) | ✅      | ✅            | ❌                  |
+| Cambiar precios                                    | ✅            | Con la **clave del jefe** (si el jefe lo exige) | ❌ |
+| Importar productos desde Excel                     | ✅            | Con la **clave del jefe** | ❌      |
 | Entradas y salidas de mercancía                    | ✅            | Con la **clave del jefe** | ❌      |
 | Anular ventas                                      | ✅            | Con la **clave del jefe** | ❌      |
 | Ver y cambiar la tasa del dólar                    | ✅            | ✅            | ❌                  |
-| Cierre del día y descargar Excel/PDF               | ✅            | ✅            | ❌                  |
-| **Configuración**: vendedores y clave del jefe     | ✅            | ❌            | ❌                  |
+| Reportes (por día o por rango) y Excel/PDF         | ✅            | ✅            | ❌                  |
+| **Configuración**: vendedores, clave del jefe y si el precio pide clave | ✅            | ❌            | ❌                  |
 
 Atención al público ve el precio en dólares ya calculado, pero no la tasa usada.
 
@@ -81,12 +83,17 @@ Busca por **código**, nombre o descripción, sin importar mayúsculas ni tildes
 La vista de **Atención al público** usa letra más grande y todo el ancho de la pantalla,
 para leer la información de un vistazo o mostrársela al cliente.
 
-### Ventas
+### Ventas con carrito
 
-El botón **Vender** de cada producto abre una ventana para elegir la cantidad y ver el total
-en pesos y dólares. El vendedor escribe **su código** y confirma: la venta queda registrada
-a su nombre y se **descuenta del inventario automáticamente**. No se puede vender más de lo
-disponible, ni siquiera si dos vendedores venden el mismo producto al mismo tiempo.
+El botón **Agregar** de cada producto lo pone en el carrito (cada clic suma una unidad, sin
+pasar de lo disponible). Abajo aparece la barra del carrito con el total; con **Ver carrito y
+cobrar** se ajustan las cantidades, se quitan productos y el vendedor escribe **su código** una
+sola vez. Al confirmar, toda la venta queda registrada con **un mismo número (#)** a su nombre
+y se **descuenta del inventario automáticamente**.
+
+La venta se registra completa o no se registra: si a un producto le faltan unidades (por
+ejemplo, otro vendedor se llevó la última), no se vende nada y el carrito se ajusta a lo que
+hay. Nunca se vende más de lo disponible.
 
 ### Entradas y salidas de mercancía
 
@@ -97,27 +104,54 @@ La cantidad de un producto **no se edita a mano**. Solo cambia con:
   (compra a proveedor, producto dañado, devolución…) y, para el administrador, la
   **clave del jefe**.
 - **Anulación de una venta** (devuelve las unidades; el administrador necesita la clave del jefe).
+- **Importación desde Excel** (ver abajo).
 
 Un producto nuevo se crea con 0 unidades; la mercancía se carga después con una entrada.
 Solo se puede eliminar un producto que tenga 0 unidades.
 Cada movimiento queda en el historial con la hora, el motivo, quién lo hizo y cuánto
 había antes y después.
 
-### Cierre del día (administrador y jefe)
+### Precios
 
-La pestaña **Cierre del día** muestra, para la fecha elegida (por defecto hoy):
+- Todo cambio de precio queda en el **historial**: quién, cuándo, de cuánto a cuánto y si fue
+  editando o por Excel. Se ve al editar el producto ("Historial de precio") y en Reportes.
+- El jefe decide en **Configuración** si cambiar un precio requiere su clave (viene activado).
+  Si está activado, al administrador se le pide la clave del jefe solo cuando cambia el precio.
+
+### Importar productos desde Excel
+
+Botón **Importar Excel** en el inventario (administrador y jefe):
+
+1. **Descargar plantilla**: un Excel con todos los productos actuales (código, nombre,
+   descripción, cantidad, precio). Se corrige lo necesario o se agregan filas nuevas.
+2. Se elige el archivo y qué significa la columna **Cantidad**: la **existencia total**
+   (reemplaza lo que hay) o **unidades que llegan** (se suman).
+3. Antes de importar se ve fila por fila qué va a pasar: productos nuevos, cambios
+   (precio antes → después, cantidad antes → después), sin cambios y errores.
+4. El administrador autoriza todo el archivo una sola vez con la clave del jefe.
+
+Reglas: los productos se buscan por código (si no existe, se crea con nombre y precio
+obligatorios); una celda vacía deja ese dato como está; si hay alguna fila con error no se
+importa nada. Cada cambio de cantidad queda como entrada/salida y cada cambio de precio en
+el historial. Máximo 5.000 productos por archivo.
+
+### Reportes (administrador y jefe)
+
+La pestaña **Reportes** muestra por defecto el **cierre del día** de hoy. Se puede elegir
+**Ayer, Esta semana, Semana pasada, Este mes, Mes pasado, Últimos 7 días, Últimos 30 días**
+o un periodo **personalizado** (desde – hasta). Las semanas empiezan el lunes.
 
 - Total vendido en pesos (y su equivalente en dólares con la tasa de cada venta),
-  número de ventas, unidades vendidas y productos por agotarse.
-- Productos más vendidos, ventas por vendedor, entradas y salidas de mercancía,
-  detalle de cada venta (hora, producto, cantidad, vendedor) y productos con 5 unidades
-  o menos (`STOCK_BAJO` en `js/config.js`).
-- **Anular** una venta equivocada (con la clave del jefe): las unidades vuelven al
-  inventario y la venta queda marcada como anulada (no se borra).
-- **Descargar Excel** (hojas Resumen, Ventas, Por producto, Por vendedor, Entradas y salidas,
-  Por agotarse e Inventario) o **Descargar PDF** (reporte de cierre listo para imprimir).
+  número de ventas (cada carrito cuenta como una), unidades vendidas y productos por agotarse.
+- Ventas por día (cuando el periodo tiene varios días), productos más vendidos, ventas por
+  vendedor, entradas y salidas, cambios de precio, detalle de cada venta (n.º, fecha/hora,
+  producto, cantidad, vendedor) y productos con 5 unidades o menos (`STOCK_BAJO` en `js/config.js`).
+- **Anular** una línea de venta equivocada (con la clave del jefe): las unidades vuelven al
+  inventario y queda marcada como anulada (no se borra).
+- **Descargar Excel** (Resumen, Ventas, Por día, Por producto, Por vendedor, Entradas y salidas,
+  Cambios de precio, Por agotarse e Inventario) o **Descargar PDF** (listo para imprimir).
 
-Con la pestaña abierta en el día de hoy, los datos se actualizan solos cada minuto.
+Mientras el periodo incluya el día de hoy, los datos se actualizan solos cada minuto.
 
 ### Zona horaria
 
@@ -172,7 +206,8 @@ Se puede ejecutar en *SQL Editor* en un proyecto nuevo, y es seguro volver a eje
 | `perfiles`      | Rol de cada usuario (`jefe` / `admin` / `atencion`)              |
 | `productos`     | Código (único), nombre, descripción, cantidad y precio en COP    |
 | `configuracion` | Tasa del dólar (pesos por 1 USD), cuándo y quién la cambió       |
-| `ventas`        | Cada venta: producto, cantidad, precio, tasa, vendedor, hora y si fue anulada |
+| `ventas`        | Cada línea vendida: n.º de venta, producto, cantidad, precio, tasa, vendedor, hora y si fue anulada |
+| `historial_precios` | Cada cambio de precio: antes, después, quién, cuándo y si fue por Excel |
 | `movimientos`   | Historial de todo lo que mueve el inventario (ventas, anulaciones, entradas, salidas) |
 | `vendedores`    | Nombre y código cifrado de cada vendedor (nadie lo puede leer)   |
 | `seguridad`     | Clave del jefe cifrada e intentos fallidos (nadie la puede leer) |
