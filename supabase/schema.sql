@@ -29,6 +29,7 @@ create table if not exists public.perfiles (
 
 create table if not exists public.productos (
   id             bigint generated always as identity primary key,
+  codigo         text,
   nombre         text not null check (char_length(trim(nombre)) > 0),
   descripcion    text not null default '',
   cantidad       integer not null default 0 check (cantidad >= 0),
@@ -36,6 +37,12 @@ create table if not exists public.productos (
   creado_en      timestamptz not null default now(),
   actualizado_en timestamptz not null default now()
 );
+
+-- Para bases creadas antes de que existiera el código.
+alter table public.productos add column if not exists codigo text;
+
+-- El código no se puede repetir (los productos sin código no cuentan).
+create unique index if not exists productos_codigo_unico on public.productos (codigo);
 
 -- Una sola fila (id = 1). tasa_usd = cuántos pesos colombianos vale 1 USD.
 create table if not exists public.configuracion (
@@ -62,12 +69,15 @@ as $$
   select rol from public.perfiles where id = auth.uid()
 $$;
 
-create or replace function public.tocar_producto()
+-- Guarda el código en mayúsculas y sin espacios ("abc-12 " → "ABC-12"),
+-- y registra la fecha de la última modificación.
+create or replace function public.preparar_producto()
 returns trigger
 language plpgsql
 set search_path = ''
 as $$
 begin
+  new.codigo := nullif(upper(trim(new.codigo)), '');
   new.actualizado_en := now();
   return new;
 end
@@ -86,17 +96,22 @@ end
 $$;
 
 drop trigger if exists productos_actualizado on public.productos;
-create trigger productos_actualizado
-  before update on public.productos
-  for each row execute function public.tocar_producto();
+drop function if exists public.tocar_producto();
+
+drop trigger if exists productos_preparar on public.productos;
+create trigger productos_preparar
+  before insert or update on public.productos
+  for each row execute function public.preparar_producto();
 
 drop trigger if exists configuracion_actualizada on public.configuracion;
 create trigger configuracion_actualizada
   before update on public.configuracion
   for each row execute function public.tocar_configuracion();
 
--- Búsqueda sin importar mayúsculas ni tildes ("cafe" encuentra "Café").
--- Cada palabra escrita debe aparecer en el nombre o la descripción.
+-- Búsqueda por código, nombre o descripción, sin importar mayúsculas ni
+-- tildes ("cafe" encuentra "Café"). Cada palabra escrita debe aparecer.
+-- Primero salen los productos cuyo código es exactamente el buscado,
+-- luego los que empiezan por él, y después el resto por nombre.
 -- Corre con los permisos de quien llama, así que respeta RLS.
 create or replace function public.buscar_productos(q text default '')
 returns setof public.productos
@@ -110,9 +125,12 @@ as $$
     select 1
     from unnest(regexp_split_to_array(unaccent(lower(coalesce(q, ''))), '\s+')) as palabra
     where palabra <> ''
-      and strpos(unaccent(lower(p.nombre || ' ' || p.descripcion)), palabra) = 0
+      and strpos(unaccent(lower(coalesce(p.codigo, '') || ' ' || p.nombre || ' ' || p.descripcion)), palabra) = 0
   )
-  order by p.nombre
+  order by
+    coalesce(p.codigo = upper(trim(q)), false) desc,
+    coalesce(trim(q) <> '' and starts_with(p.codigo, upper(trim(q))), false) desc,
+    p.nombre
   limit 300
 $$;
 
@@ -124,7 +142,7 @@ revoke all on public.perfiles, public.productos, public.configuracion from anon,
 
 grant select on public.perfiles to authenticated;
 grant select, insert, delete on public.productos to authenticated;
-grant update (nombre, descripcion, cantidad, precio_cop) on public.productos to authenticated;
+grant update (codigo, nombre, descripcion, cantidad, precio_cop) on public.productos to authenticated;
 grant select on public.configuracion to authenticated;
 grant update (tasa_usd) on public.configuracion to authenticated;
 

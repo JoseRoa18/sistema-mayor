@@ -211,7 +211,7 @@
       }
       $('#dlg-tasa').close();
       toast('Tasa del dólar actualizada');
-      await cargarTasa();
+      cargarTasa();
     });
   });
 
@@ -237,6 +237,15 @@
     temporizadorBusqueda = setTimeout(() => buscar(e.target.value), 250);
   });
 
+  // Enter busca de inmediato y deja el texto seleccionado, así el siguiente
+  // código (escrito o leído con lector de código de barras) reemplaza al anterior.
+  $('#buscar').addEventListener('keydown', (e) => {
+    if (e.key !== 'Enter') return;
+    clearTimeout(temporizadorBusqueda);
+    buscar(e.target.value);
+    e.target.select();
+  });
+
   function etiquetaCantidad(cantidad) {
     if (cantidad <= 0) return el('span', { class: 'stock stock-agotado' }, 'Agotado');
     const clase = cantidad <= STOCK_BAJO ? 'stock stock-bajo' : 'stock';
@@ -246,6 +255,10 @@
   function filaProducto(p) {
     const esAdmin = estado.perfil?.rol === 'admin';
     return el('tr', {},
+      el('td', { class: 'col-codigo', 'data-label': 'Código' },
+        p.codigo
+          ? el('span', { class: 'codigo' }, p.codigo)
+          : el('span', { class: 'sin-codigo' }, 'Sin código')),
       el('td', { class: 'col-producto', 'data-label': 'Producto' },
         el('div', { class: 'producto-nombre' }, p.nombre),
         p.descripcion ? el('div', { class: 'producto-desc' }, p.descripcion) : null),
@@ -298,6 +311,7 @@
     form.reset();
     $('#dlg-producto-titulo').textContent = p ? 'Editar producto' : 'Nuevo producto';
     if (p) {
+      form.codigo.value = p.codigo || '';
       form.nombre.value = p.nombre;
       form.descripcion.value = p.descripcion;
       form.cantidad.value = p.cantidad;
@@ -306,7 +320,7 @@
     mostrarError('#producto-error', '');
     previsualizarPrecio();
     $('#dlg-producto').showModal();
-    form.nombre.focus();
+    form.codigo.focus();
   }
 
   $('#btn-nuevo').addEventListener('click', () => abrirProducto(null));
@@ -316,12 +330,14 @@
     e.preventDefault();
     const form = e.currentTarget;
     const datos = {
+      codigo: form.codigo.value.trim().toUpperCase(),
       nombre: form.nombre.value.trim(),
       descripcion: form.descripcion.value.trim(),
       cantidad: Number(form.cantidad.value),
       precio_cop: leerNumero(form.precio_cop.value),
     };
 
+    if (!datos.codigo) return mostrarError('#producto-error', 'El código es obligatorio.');
     if (!datos.nombre) return mostrarError('#producto-error', 'El nombre es obligatorio.');
     if (form.cantidad.value === '' || !Number.isInteger(datos.cantidad) || datos.cantidad < 0) {
       return mostrarError('#producto-error', 'La cantidad debe ser un número entero, 0 o mayor.');
@@ -336,13 +352,18 @@
         : db.from('productos').insert(datos);
       const { data, error } = await consulta.select('id');
 
+      if (error?.code === '23505') {
+        mostrarError('#producto-error', `Ya existe otro producto con el código ${datos.codigo}.`);
+        return;
+      }
       if (error || !data.length) {
         mostrarError('#producto-error', error ? error.message : 'No tienes permiso para modificar productos.');
         return;
       }
       $('#dlg-producto').close();
       toast(productoEditando ? 'Producto actualizado' : 'Producto creado');
-      await buscar(estado.busqueda);
+      // Sin await: el botón se libera de inmediato y la lista se actualiza aparte.
+      buscar(estado.busqueda);
     });
   });
 
@@ -363,7 +384,7 @@
         return;
       }
       toast('Producto eliminado');
-      await buscar(estado.busqueda);
+      buscar(estado.busqueda);
     });
   });
 

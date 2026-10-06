@@ -59,16 +59,16 @@
       <section class="panel-superior">
         <div class="buscador">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-          <input id="buscar" type="search" placeholder="Buscar producto…" autocomplete="off" aria-label="Buscar producto por nombre o descripción">
+          <input id="buscar" type="search" placeholder="Buscar por código o nombre…" autocomplete="off" aria-label="Buscar producto por código, nombre o descripción">
         </div>
 
-        <div class="tasa">
+        <div class="tasa solo-admin">
           <div>
             <div class="tasa-etiqueta">Tasa del dólar</div>
             <div class="tasa-valor"><span id="tasa-valor">—</span></div>
             <div id="tasa-fecha" class="tasa-fecha"></div>
           </div>
-          <button id="btn-tasa" type="button" class="btn btn-secundario btn-sm solo-admin">Cambiar</button>
+          <button id="btn-tasa" type="button" class="btn btn-secundario btn-sm">Cambiar</button>
         </div>
       </section>
 
@@ -81,6 +81,7 @@
         <table class="tabla">
           <thead>
             <tr>
+              <th>Código</th>
               <th>Producto</th>
               <th class="num">Cantidad</th>
               <th class="num">Precio COP</th>
@@ -100,6 +101,10 @@
     <form id="form-producto" novalidate>
       <h2 id="dlg-producto-titulo">Nuevo producto</h2>
 
+      <label class="campo">
+        <span>Código</span>
+        <input name="codigo" class="input-codigo" maxlength="50" autocomplete="off" autocapitalize="characters" spellcheck="false" required>
+      </label>
       <label class="campo">
         <span>Nombre</span>
         <input name="nombre" maxlength="150" required>

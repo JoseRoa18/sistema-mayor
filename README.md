@@ -7,10 +7,12 @@ Precios en **pesos colombianos (COP)** con su equivalente en **dólares (USD)** 
 
 | Puede…                                         | Administrador | Atención al público |
 |------------------------------------------------|:-------------:|:-------------------:|
-| Buscar productos                               | ✅            | ✅                  |
-| Ver nombre, descripción, cantidad, precio COP y USD | ✅       | ✅                  |
+| Buscar productos por código o nombre           | ✅            | ✅                  |
+| Ver código, nombre, descripción, cantidad, precio COP y USD | ✅ | ✅               |
 | Crear, editar y eliminar productos             | ✅            | ❌                  |
-| Cambiar la tasa del dólar                      | ✅            | ❌                  |
+| Ver y cambiar la tasa del dólar                | ✅            | ❌                  |
+
+Atención al público ve el precio en dólares ya calculado, pero no la tasa usada.
 
 Los permisos se aplican **en la base de datos** (Row Level Security de Supabase), no solo ocultando botones:
 aunque alguien intente modificar datos sin ser administrador, la base de datos lo rechaza.
@@ -38,9 +40,22 @@ internamente el correo `admin@sistema-mayor.local`. También se puede escribir e
 
 ### Búsqueda
 
-Busca en el nombre y la descripción, sin importar mayúsculas ni tildes
+Busca por **código**, nombre o descripción, sin importar mayúsculas ni tildes
 (`cafe` encuentra "Café"). Si se escriben varias palabras, deben aparecer todas
 (`nevera plata` encuentra "Nevera Samsung — color plata").
+
+- Primero aparece el producto cuyo código es **exactamente** el buscado, luego los
+  que **empiezan** por ese código, y después el resto.
+- Con **Enter** busca de inmediato y deja el texto seleccionado: el siguiente código
+  reemplaza al anterior (sirve también con lector de código de barras).
+
+### Código del producto
+
+- Es obligatorio al crear o editar un producto y no se puede repetir.
+- Se guarda en mayúsculas y sin espacios al inicio o al final (`abc-12` → `ABC-12`).
+
+La vista de **Atención al público** usa letra más grande y todo el ancho de la pantalla,
+para leer la información de un vistazo o mostrársela al cliente.
 
 ### Precios
 
@@ -88,7 +103,7 @@ Se puede ejecutar en *SQL Editor* en un proyecto nuevo, y es seguro volver a eje
 | Tabla           | Contenido                                                        |
 |-----------------|------------------------------------------------------------------|
 | `perfiles`      | Rol de cada usuario (`admin` / `atencion`)                       |
-| `productos`     | Nombre, descripción, cantidad y precio en COP                    |
+| `productos`     | Código (único), nombre, descripción, cantidad y precio en COP    |
 | `configuracion` | Tasa del dólar (pesos por 1 USD), cuándo y quién la cambió       |
 
 ## Seguridad
