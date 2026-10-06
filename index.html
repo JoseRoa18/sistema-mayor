@@ -11,6 +11,7 @@
   <link rel="stylesheet" href="css/styles.css">
   <script defer src="https://cdn.jsdelivr.net/npm/@supabase/supabase-js@2"></script>
   <script defer src="js/config.js"></script>
+  <script defer src="js/exportar.js"></script>
   <script defer src="js/app.js"></script>
 </head>
 <body>
@@ -55,7 +56,15 @@
       </div>
     </header>
 
+    <nav class="pestanas solo-admin" aria-label="Secciones">
+      <button type="button" class="pestana" data-seccion="inventario" aria-current="page">Inventario</button>
+      <button type="button" class="pestana" data-seccion="cierre">Cierre del día</button>
+      <button type="button" class="pestana solo-jefe" data-seccion="configuracion">Configuración</button>
+    </nav>
+
     <main class="contenido">
+      <!-- ---------- Inventario ---------- -->
+      <section id="seccion-inventario">
       <section class="panel-superior">
         <div class="buscador">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -86,15 +95,234 @@
               <th class="num">Cantidad</th>
               <th class="num">Precio COP</th>
               <th class="num">Precio USD</th>
-              <th class="solo-admin"><span class="sr-only">Acciones</span></th>
+              <th><span class="sr-only">Acciones</span></th>
             </tr>
           </thead>
           <tbody id="tabla-cuerpo"></tbody>
         </table>
         <p id="vacio" class="vacio" hidden></p>
       </div>
+      </section>
+
+      <!-- ---------- Cierre del día (solo administrador) ---------- -->
+      <section id="seccion-cierre" hidden>
+        <div class="cierre-encabezado">
+          <div>
+            <h1 class="cierre-titulo">Cierre del día</h1>
+            <p id="cierre-subtitulo" class="cierre-subtitulo"></p>
+          </div>
+          <div class="cierre-controles">
+            <input id="cierre-fecha" type="date" aria-label="Fecha del cierre">
+            <button id="btn-actualizar" type="button" class="btn btn-secundario">Actualizar</button>
+            <button id="btn-excel" type="button" class="btn btn-secundario">Descargar Excel</button>
+            <button id="btn-pdf" type="button" class="btn btn-primario">Descargar PDF</button>
+          </div>
+        </div>
+
+        <div class="kpis">
+          <div class="kpi kpi-principal">
+            <div class="kpi-etiqueta">Total vendido</div>
+            <div id="kpi-total" class="kpi-valor">—</div>
+            <div id="kpi-total-usd" class="kpi-nota"></div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-etiqueta">Ventas</div>
+            <div id="kpi-ventas" class="kpi-valor">—</div>
+            <div id="kpi-anuladas" class="kpi-nota"></div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-etiqueta">Unidades vendidas</div>
+            <div id="kpi-unidades" class="kpi-valor">—</div>
+            <div id="kpi-productos" class="kpi-nota"></div>
+          </div>
+          <div class="kpi">
+            <div class="kpi-etiqueta">Por agotarse</div>
+            <div id="kpi-agotarse" class="kpi-valor">—</div>
+            <div id="kpi-agotados" class="kpi-nota"></div>
+          </div>
+        </div>
+
+        <div class="cierre-columnas">
+          <section class="tarjeta">
+            <h2>Productos más vendidos</h2>
+            <div class="tabla-desplazable">
+              <table class="tabla-simple">
+                <thead><tr><th>Código</th><th>Producto</th><th class="num">Unidades</th><th class="num">Total</th></tr></thead>
+                <tbody id="tabla-top"></tbody>
+              </table>
+            </div>
+            <p id="vacio-top" class="vacio-simple" hidden>No hubo ventas este día.</p>
+          </section>
+
+          <section class="tarjeta">
+            <h2>Ventas por vendedor</h2>
+            <div class="tabla-desplazable">
+              <table class="tabla-simple">
+                <thead><tr><th>Vendedor</th><th class="num">Ventas</th><th class="num">Unidades</th><th class="num">Total</th></tr></thead>
+                <tbody id="tabla-vendedores"></tbody>
+              </table>
+            </div>
+            <p id="vacio-vendedores" class="vacio-simple" hidden>No hubo ventas este día.</p>
+          </section>
+
+          <section class="tarjeta">
+            <h2>Productos por agotarse</h2>
+            <p class="tarjeta-nota">Inventario actual con <span id="umbral-agotarse"></span> unidades o menos</p>
+            <div class="tabla-desplazable">
+              <table class="tabla-simple">
+                <thead><tr><th>Código</th><th>Producto</th><th class="num">Quedan</th></tr></thead>
+                <tbody id="tabla-agotarse"></tbody>
+              </table>
+            </div>
+            <p id="vacio-agotarse" class="vacio-simple" hidden>Ningún producto está por agotarse.</p>
+          </section>
+
+          <section class="tarjeta">
+            <h2>Entradas y salidas</h2>
+            <p class="tarjeta-nota">Movimientos autorizados con la clave del jefe</p>
+            <div class="tabla-desplazable">
+              <table class="tabla-simple">
+                <thead><tr><th>Hora</th><th>Producto</th><th class="num">Movimiento</th><th>Motivo</th></tr></thead>
+                <tbody id="tabla-movimientos"></tbody>
+              </table>
+            </div>
+            <p id="vacio-movimientos" class="vacio-simple" hidden>No hubo entradas ni salidas este día.</p>
+          </section>
+        </div>
+
+        <section class="tarjeta">
+          <h2>Detalle de ventas</h2>
+          <div class="tabla-desplazable">
+            <table class="tabla-simple">
+              <thead>
+                <tr>
+                  <th>Hora</th><th>Código</th><th>Producto</th><th class="num">Cant.</th>
+                  <th class="num">Precio unit.</th><th class="num">Total</th><th>Vendedor</th>
+                  <th><span class="sr-only">Acciones</span></th>
+                </tr>
+              </thead>
+              <tbody id="tabla-ventas"></tbody>
+            </table>
+          </div>
+          <p id="vacio-ventas" class="vacio-simple" hidden>No hubo ventas este día.</p>
+        </section>
+      </section>
+
+      <!-- ---------- Configuración (solo el jefe) ---------- -->
+      <section id="seccion-configuracion" hidden>
+        <h1 class="cierre-titulo">Configuración</h1>
+        <p class="cierre-subtitulo">Solo el jefe ve esta sección.</p>
+
+        <div class="config-columnas">
+          <section class="tarjeta config-tarjeta">
+            <h2>Vendedores</h2>
+            <p class="tarjeta-nota">Cada vendedor escribe su código al registrar una venta. Los códigos se guardan cifrados: nadie puede verlos, ni siquiera aquí; si alguien olvida el suyo, asígnale uno nuevo.</p>
+            <ul id="config-vendedores" class="lista-vendedores"></ul>
+            <p id="config-sin-vendedores" class="vacio-simple" hidden>Todavía no hay vendedores. Crea el primero abajo.</p>
+
+            <form id="form-vendedor" class="bloque-jefe" novalidate>
+              <h3 id="vendedor-titulo">Nuevo vendedor</h3>
+              <div class="fila-2">
+                <label class="campo">
+                  <span>Nombre</span>
+                  <input name="nombre" maxlength="60" autocomplete="off" required>
+                </label>
+                <label class="campo">
+                  <span id="vendedor-codigo-etiqueta">Código (mínimo 4)</span>
+                  <input name="codigo" class="input-secreto" autocomplete="off" autocapitalize="off" spellcheck="false">
+                </label>
+              </div>
+              <label class="casilla" id="vendedor-activo-fila" hidden>
+                <input type="checkbox" name="activo" checked> Activo (puede vender)
+              </label>
+              <p id="vendedor-error" class="alerta alerta-error" role="alert" hidden></p>
+              <div class="dialogo-acciones">
+                <button type="button" id="btn-vendedor-cancelar" class="btn btn-fantasma" hidden>Cancelar edición</button>
+                <button type="submit" class="btn btn-primario">Guardar vendedor</button>
+              </div>
+            </form>
+          </section>
+
+          <section class="tarjeta config-tarjeta">
+            <h2>Clave del jefe</h2>
+            <p class="tarjeta-nota">Es la clave que tecleas en el computador de la administradora para autorizar entradas, salidas y anulaciones de ventas. Con tu usuario no te la pide.</p>
+            <p id="clave-estado" class="nota-stock"></p>
+            <form id="form-clave-jefe" novalidate>
+              <label class="campo">
+                <span>Nueva clave (mínimo 6 caracteres)</span>
+                <input name="nueva" class="input-secreto" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+              </label>
+              <label class="campo">
+                <span>Repite la nueva clave</span>
+                <input name="repetir" class="input-secreto" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+              </label>
+              <p id="clave-jefe-error" class="alerta alerta-error" role="alert" hidden></p>
+              <div class="dialogo-acciones">
+                <button type="submit" class="btn btn-primario">Guardar clave</button>
+              </div>
+            </form>
+          </section>
+        </div>
+      </section>
     </main>
   </div>
+
+  <!-- ============ DIÁLOGO: VENDER ============ -->
+  <dialog id="dlg-vender" class="dialogo dialogo-sm">
+    <form id="form-vender" novalidate>
+      <h2>Registrar venta</h2>
+
+      <div class="venta-producto">
+        <span id="venta-codigo" class="codigo"></span>
+        <div id="venta-nombre" class="producto-nombre"></div>
+        <div id="venta-disponible" class="venta-disponible"></div>
+      </div>
+
+      <div class="campo">
+        <label for="venta-cantidad">Cantidad</label>
+        <div class="contador">
+          <button type="button" class="btn btn-secundario" data-paso="-1" aria-label="Una unidad menos">−</button>
+          <input id="venta-cantidad" name="cantidad" type="number" min="1" step="1" inputmode="numeric" required>
+          <button type="button" class="btn btn-secundario" data-paso="1" aria-label="Una unidad más">+</button>
+        </div>
+      </div>
+
+      <div class="venta-totales">
+        <div><span>Precio unitario</span><strong id="venta-unitario"></strong></div>
+        <div class="venta-total"><span>Total</span><strong id="venta-total"></strong></div>
+        <div id="venta-total-usd" class="venta-total-usd"></div>
+      </div>
+
+      <label class="campo">
+        <span>Código del vendedor</span>
+        <input name="vendedor" class="input-secreto" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      </label>
+
+      <p id="vender-error" class="alerta alerta-error" role="alert" hidden></p>
+
+      <div class="dialogo-acciones">
+        <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+        <button type="submit" class="btn btn-primario">Confirmar venta</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ============ DIÁLOGO: ANULAR VENTA ============ -->
+  <dialog id="dlg-anular" class="dialogo dialogo-sm">
+    <form id="form-anular" novalidate>
+      <h2>Anular venta</h2>
+      <p>¿Anular la venta de <strong id="anular-detalle"></strong>? Las unidades vuelven al inventario.</p>
+      <label class="campo campo-clave-jefe">
+        <span>Clave del jefe</span>
+        <input name="clave" class="input-secreto" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      </label>
+      <p id="anular-error" class="alerta alerta-error" role="alert" hidden></p>
+      <div class="dialogo-acciones">
+        <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+        <button type="submit" class="btn btn-peligro">Anular venta</button>
+      </div>
+    </form>
+  </dialog>
 
   <!-- ============ DIÁLOGO: PRODUCTO ============ -->
   <dialog id="dlg-producto" class="dialogo">
@@ -113,21 +341,18 @@
         <span>Descripción</span>
         <textarea name="descripcion" rows="3" maxlength="500"></textarea>
       </label>
-      <div class="fila-2">
-        <label class="campo">
-          <span>Cantidad</span>
-          <input name="cantidad" type="number" min="0" step="1" inputmode="numeric" required>
-        </label>
-        <label class="campo">
-          <span>Precio (pesos COP)</span>
-          <input name="precio_cop" inputmode="decimal" placeholder="Ej: 150.000" required>
-        </label>
-      </div>
+      <label class="campo">
+        <span>Precio (pesos COP)</span>
+        <input name="precio_cop" inputmode="decimal" placeholder="Ej: 150.000" required>
+      </label>
       <p id="producto-vista" class="vista-previa"></p>
+
+      <p id="producto-stock" class="nota-stock"></p>
 
       <p id="producto-error" class="alerta alerta-error" role="alert" hidden></p>
 
       <div class="dialogo-acciones">
+        <button type="button" id="btn-eliminar-producto" class="btn btn-peligro-suave accion-izquierda">Eliminar producto</button>
         <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
         <button type="submit" class="btn btn-primario">Guardar</button>
       </div>
@@ -163,6 +388,58 @@
       <div class="dialogo-acciones">
         <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
         <button type="submit" class="btn btn-peligro">Eliminar</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ============ DIÁLOGO: ENTRADA / SALIDA DE MERCANCÍA ============ -->
+  <dialog id="dlg-movimiento" class="dialogo dialogo-sm">
+    <form id="form-movimiento" novalidate>
+      <h2>Entrada o salida de mercancía</h2>
+
+      <div class="venta-producto">
+        <span id="mov-codigo" class="codigo"></span>
+        <div id="mov-nombre" class="producto-nombre"></div>
+        <div id="mov-disponible" class="venta-disponible"></div>
+      </div>
+
+      <div class="segmentado" role="radiogroup" aria-label="Tipo de movimiento">
+        <label><input type="radio" name="tipo" value="entrada" checked><span>Entrada (+)</span></label>
+        <label><input type="radio" name="tipo" value="salida"><span>Salida (−)</span></label>
+      </div>
+
+      <div class="campo">
+        <label for="mov-cantidad">Cantidad</label>
+        <div class="contador">
+          <button type="button" class="btn btn-secundario" data-paso="-1" aria-label="Una unidad menos">−</button>
+          <input id="mov-cantidad" name="cantidad" type="number" min="1" step="1" inputmode="numeric" required>
+          <button type="button" class="btn btn-secundario" data-paso="1" aria-label="Una unidad más">+</button>
+        </div>
+      </div>
+      <p id="mov-vista" class="vista-previa"></p>
+
+      <label class="campo">
+        <span>Motivo</span>
+        <input name="motivo" maxlength="120" list="motivos" placeholder="Ej: Compra a proveedor" required>
+        <datalist id="motivos">
+          <option value="Compra a proveedor"></option>
+          <option value="Devolución de cliente"></option>
+          <option value="Producto dañado"></option>
+          <option value="Ajuste de inventario"></option>
+          <option value="Traslado"></option>
+        </datalist>
+      </label>
+
+      <label class="campo campo-clave-jefe">
+        <span>Clave del jefe</span>
+        <input name="clave" class="input-secreto" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      </label>
+
+      <p id="mov-error" class="alerta alerta-error" role="alert" hidden></p>
+
+      <div class="dialogo-acciones">
+        <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+        <button type="submit" class="btn btn-primario">Registrar</button>
       </div>
     </form>
   </dialog>

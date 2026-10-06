@@ -13,4 +13,8 @@ window.CONFIG = {
 
   // Cantidad igual o menor a esta se marca como "pocas unidades".
   STOCK_BAJO: 5,
+
+  // Zona horaria de todo el sistema: horas mostradas, qué ventas entran en
+  // el cierre de cada día y fechas de los reportes. Caracas = UTC-4.
+  ZONA_HORARIA: 'America/Caracas',
 };

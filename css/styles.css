@@ -71,8 +71,9 @@ body {
 
 [hidden] { display: none !important; }
 
-/* Lo que solo ve el administrador */
-body:not([data-rol="admin"]) .solo-admin { display: none !important; }
+/* Lo que ven el administrador y el jefe; lo que solo ve el jefe */
+body:not([data-rol="admin"]):not([data-rol="jefe"]) .solo-admin { display: none !important; }
+body:not([data-rol="jefe"]) .solo-jefe { display: none !important; }
 
 .sr-only {
   position: absolute; width: 1px; height: 1px; overflow: hidden;
@@ -115,7 +116,7 @@ h1, h2 { margin: 0; line-height: 1.25; }
 /* ---------------- Campos ---------------- */
 
 .campo { display: flex; flex-direction: column; gap: 6px; margin-bottom: 14px; }
-.campo > span { font-size: 13px; font-weight: 600; color: var(--texto-2); }
+.campo > span, .campo > label { font-size: 13px; font-weight: 600; color: var(--texto-2); }
 
 input, textarea {
   width: 100%;
@@ -201,14 +202,32 @@ input:focus, textarea:focus {
   font-size: 12px; font-weight: 600; white-space: nowrap;
   background: var(--superficie-2); color: var(--texto-2); border: 1px solid var(--borde);
 }
-body[data-rol="admin"] .chip { background: var(--primario-suave); color: var(--primario); border-color: transparent; }
+body[data-rol="admin"] .chip, body[data-rol="jefe"] .chip { background: var(--primario-suave); color: var(--primario); border-color: transparent; }
+
+/* ---------------- Pestañas (administrador) ---------------- */
+
+.pestanas {
+  display: flex; gap: 4px;
+  padding: 8px 24px 0;
+  background: var(--superficie);
+  border-bottom: 1px solid var(--borde);
+}
+.pestana {
+  padding: 10px 16px; margin-bottom: -1px;
+  font: inherit; font-weight: 600; font-size: 14px; color: var(--texto-3);
+  background: none; border: 0; border-bottom: 2px solid transparent;
+  cursor: pointer;
+}
+.pestana:hover { color: var(--texto); }
+.pestana[aria-current="page"] { color: var(--primario); border-bottom-color: var(--primario); }
+.pestana:focus-visible { outline: 3px solid color-mix(in srgb, var(--primario) 40%, transparent); outline-offset: -3px; }
 
 /* ---------------- Contenido ---------------- */
 
 .contenido { max-width: 1100px; margin: 0 auto; padding: 24px; }
 
 .panel-superior { display: grid; grid-template-columns: 1fr auto; gap: 16px; margin-bottom: 20px; }
-body:not([data-rol="admin"]) .panel-superior { grid-template-columns: 1fr; }   /* sin tasa: buscador a todo el ancho */
+body[data-rol="atencion"] .panel-superior { grid-template-columns: 1fr; }   /* sin tasa: buscador a todo el ancho */
 
 .buscador { position: relative; }
 .buscador svg {
@@ -264,7 +283,7 @@ body:not([data-rol="admin"]) .panel-superior { grid-template-columns: 1fr; }   /
   letter-spacing: .3px;
 }
 .codigo {
-  display: inline-block; padding: 3px 9px; border-radius: 6px;
+  display: inline-block; padding: 3px 9px; border-radius: 6px; white-space: nowrap;
   font-weight: 700; font-size: 14px;
   background: var(--superficie-2); border: 1px solid var(--borde);
 }
@@ -289,6 +308,136 @@ body:not([data-rol="admin"]) .panel-superior { grid-template-columns: 1fr; }   /
 .col-acciones .btn + .btn { margin-left: 4px; }
 
 .vacio { margin: 0; padding: 48px 16px; text-align: center; color: var(--texto-3); }
+
+.btn-vender { min-width: 76px; }
+
+/* Claves y códigos: se ven como puntos, pero no son campos de contraseña,
+   así el navegador no ofrece guardarlos (la clave del jefe no debe quedar
+   guardada en el computador de nadie). */
+.input-secreto { -webkit-text-security: disc; letter-spacing: 2px; }
+
+.nota-stock {
+  margin: 0 0 14px; padding: 10px 12px; border-radius: var(--radio-sm);
+  font-size: 13px; color: var(--texto-2); background: var(--superficie-2); border: 1px solid var(--borde);
+}
+.dialogo-acciones .accion-izquierda { margin-right: auto; }
+.vista-previa.vista-error { color: var(--peligro-texto-suave); font-weight: 600; }
+
+/* Selector Entrada / Salida */
+.segmentado { display: grid; grid-template-columns: 1fr 1fr; gap: 6px; margin-bottom: 14px; }
+.segmentado label { position: relative; }
+.segmentado input { position: absolute; opacity: 0; inset: 0; margin: 0; cursor: pointer; }
+.segmentado span {
+  display: block; padding: 10px; text-align: center; font-weight: 600; font-size: 14px;
+  border: 1px solid var(--borde); border-radius: var(--radio-sm); background: var(--superficie); color: var(--texto-2);
+}
+.segmentado input:checked + span { border-color: var(--primario); background: var(--primario-suave); color: var(--primario); }
+.segmentado input:focus-visible + span { outline: 3px solid color-mix(in srgb, var(--primario) 40%, transparent); outline-offset: 2px; }
+
+/* Movimientos en el cierre: el signo (+/−) siempre acompaña al color */
+.mov { display: inline-block; min-width: 40px; padding: 2px 8px; border-radius: 999px; font-weight: 700; text-align: center; }
+.mov-entrada { background: var(--ok-suave); color: var(--ok-texto); }
+.mov-salida { background: var(--peligro-suave); color: var(--peligro-texto-suave); }
+.mov-anulacion { background: var(--aviso-suave); color: var(--aviso-texto); }
+
+/* ---------------- Configuración (jefe) ---------------- */
+
+/* El jefe no necesita teclear su clave: los campos se ocultan */
+body[data-rol="jefe"] .campo-clave-jefe { display: none; }
+
+.config-columnas { display: grid; grid-template-columns: 1.3fr 1fr; gap: 16px; margin-top: 20px; align-items: start; }
+.config-columnas > * { min-width: 0; }
+.config-tarjeta { padding-bottom: 18px; }
+.config-tarjeta h3 { margin: 0 0 12px; font-size: 15px; }
+.lista-vendedores { margin: 0 0 8px; padding: 0; list-style: none; border: 1px solid var(--borde); border-radius: var(--radio-sm); }
+.lista-vendedores:empty { display: none; }
+.lista-vendedores li { display: flex; align-items: center; gap: 10px; padding: 8px 12px; border-bottom: 1px solid var(--borde); }
+.lista-vendedores li:last-child { border-bottom: 0; }
+.lista-vendedores li.inactivo .vendedor-nombre { color: var(--texto-3); text-decoration: line-through; }
+.vendedor-nombre { flex: 1; font-weight: 600; }
+.estado-vendedor { font-size: 12px; font-weight: 600; color: var(--texto-3); }
+.estado-vendedor.activo { color: var(--ok-texto); }
+.bloque-jefe { margin-top: 20px; padding-top: 18px; border-top: 1px solid var(--borde); }
+.casilla { display: flex; align-items: center; gap: 8px; margin: -4px 0 14px; font-size: 14px; }
+.casilla input { width: auto; }
+
+/* ---------------- Ventana de venta ---------------- */
+
+.venta-producto {
+  margin-bottom: 16px; padding: 14px;
+  background: var(--superficie-2); border: 1px solid var(--borde); border-radius: var(--radio-sm);
+}
+.venta-producto .producto-nombre { margin-top: 8px; font-size: 16px; }
+.venta-disponible { margin-top: 2px; font-size: 13px; color: var(--texto-3); }
+
+.contador { display: grid; grid-template-columns: 48px 1fr 48px; gap: 8px; }
+.contador .btn { height: 48px; padding: 0; font-size: 22px; }
+.contador input { height: 48px; text-align: center; font-size: 20px; font-weight: 700; }
+
+.venta-totales { margin: 4px 0 16px; }
+.venta-totales > div { display: flex; justify-content: space-between; align-items: baseline; padding: 4px 0; }
+.venta-totales span { color: var(--texto-3); font-size: 14px; }
+.venta-total { margin-top: 4px; padding-top: 10px !important; border-top: 1px solid var(--borde); }
+.venta-total strong { font-size: 24px; }
+.venta-total-usd { justify-content: flex-end !important; padding-top: 0 !important; color: var(--texto-3); font-size: 14px; }
+
+/* ---------------- Cierre del día ---------------- */
+
+.cierre-encabezado {
+  display: flex; flex-wrap: wrap; align-items: flex-end; justify-content: space-between; gap: 16px;
+  margin-bottom: 20px;
+}
+.cierre-titulo { font-size: 24px; }
+.cierre-subtitulo { margin: 4px 0 0; color: var(--texto-3); font-size: 14px; }
+.cierre-subtitulo::first-letter { text-transform: uppercase; }
+.cierre-controles { display: flex; flex-wrap: wrap; gap: 8px; }
+.cierre-controles input[type="date"] { width: auto; height: 40px; padding: 0 10px; }
+
+.kpis { display: grid; grid-template-columns: 1.6fr repeat(3, 1fr); gap: 12px; margin-bottom: 16px; }
+.kpi {
+  display: flex; flex-direction: column; gap: 4px;
+  padding: 16px 18px;
+  background: var(--superficie); border: 1px solid var(--borde); border-radius: var(--radio);
+  box-shadow: var(--sombra);
+}
+.kpi-etiqueta { font-size: 13px; font-weight: 600; color: var(--texto-3); }
+.kpi-valor { font-size: 30px; font-weight: 700; line-height: 1.15; }
+.kpi-nota { font-size: 13px; color: var(--texto-3); }
+.kpi-principal { border-color: color-mix(in srgb, var(--primario) 45%, var(--borde)); }
+.kpi-principal .kpi-valor { font-size: 48px; letter-spacing: -1px; }
+
+.cierre-columnas { display: grid; grid-template-columns: 1fr 1fr; gap: 16px; margin-bottom: 16px; }
+.cierre-columnas > *, .kpis > * { min-width: 0; }   /* que las tablas anchas no estiren la grilla */
+
+.tarjeta {
+  padding: 18px 18px 8px;
+  background: var(--superficie); border: 1px solid var(--borde); border-radius: var(--radio);
+  box-shadow: var(--sombra);
+}
+.tarjeta h2 { margin-bottom: 4px; font-size: 16px; }
+.tarjeta-nota { margin: 0 0 8px; font-size: 13px; color: var(--texto-3); }
+
+/* position: relative contiene los textos ocultos (.sr-only) dentro del área desplazable */
+.tabla-desplazable { position: relative; overflow-x: auto; margin: 8px -18px 0; padding: 0 18px; }
+.tabla-simple { width: 100%; border-collapse: collapse; font-size: 14px; }
+.tabla-simple th {
+  padding: 8px 10px; text-align: left; white-space: nowrap;
+  font-size: 12px; font-weight: 600; color: var(--texto-3); text-transform: uppercase; letter-spacing: .4px;
+  border-bottom: 1px solid var(--borde);
+}
+.tabla-simple td { padding: 10px; border-bottom: 1px solid var(--borde); vertical-align: middle; }
+.tabla-simple tbody tr:last-child td { border-bottom: 0; }
+.tabla-simple .num { text-align: right; white-space: nowrap; font-variant-numeric: tabular-nums; }
+.tabla-simple .nowrap { white-space: nowrap; }
+.tabla-simple .col-acciones { width: 1%; text-align: right; }
+.tabla-simple tr.anulada td { color: var(--texto-3); }
+.tabla-simple tr.anulada td.num { text-decoration: line-through; }
+.codigo-sm { padding: 1px 7px; font-size: 12px; }
+.etiqueta-anulada {
+  display: inline-block; padding: 2px 8px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; background: var(--peligro-suave); color: var(--peligro-texto-suave);
+}
+.vacio-simple { margin: 0; padding: 20px 0 24px; text-align: center; color: var(--texto-3); font-size: 14px; }
 
 /* ---------------- Diálogos ---------------- */
 
@@ -331,6 +480,7 @@ body[data-rol="atencion"] .producto-nombre { font-size: 21px; }
 body[data-rol="atencion"] .producto-desc { font-size: 16px; }
 body[data-rol="atencion"] .precio { font-size: 23px; }
 body[data-rol="atencion"] .stock { min-width: 52px; padding: 4px 14px; font-size: 20px; }
+body[data-rol="atencion"] .btn-vender { height: 46px; min-width: 110px; padding: 0 20px; font-size: 17px; }
 
 @media (min-width: 721px) {
   body[data-rol="atencion"] .contenido { max-width: 1500px; padding: 32px; }
@@ -369,6 +519,18 @@ body[data-rol="atencion"] .stock { min-width: 52px; padding: 4px 14px; font-size
   .vacio { background: var(--superficie); border: 1px solid var(--borde); border-radius: var(--radio); }
 
   body[data-rol="atencion"] .tabla td.num::before { font-size: 15px; }
+  .tabla td.col-acciones .btn-vender { flex: 1; }
+
+  .pestanas { padding: 4px 16px 0; }
+  .pestana { flex: 1; }
+  .kpis { grid-template-columns: 1fr 1fr; }
+  .kpi-principal, .kpi:last-child { grid-column: 1 / -1; }
+  .kpi-principal .kpi-valor { font-size: 40px; }
+  .kpi-valor { font-size: 24px; }
+  .cierre-columnas, .config-columnas { grid-template-columns: 1fr; }
+  .cierre-controles { width: 100%; }
+  .cierre-controles input[type="date"] { flex: 1 1 100%; }
+  .cierre-controles .btn { flex: 1; }
   body[data-rol="atencion"] .buscador input { min-height: 60px; font-size: 18px; }
 }
 
