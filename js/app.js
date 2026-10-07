@@ -196,12 +196,15 @@
     $('#usuario-rol').textContent = { admin: 'Administrador', jefe: 'Jefe', atencion: 'Atención al público' }[perfil.rol];
 
     mostrarVista('app');
-    mostrarSeccion(seccionDelEnlace());
+    const seccion = seccionDelEnlace();
+    mostrarSeccion(seccion);
+    // El cursor va al buscador de una vez (no al terminar de cargar: para entonces la persona
+    // puede estar usando otro botón y se lo quitaría).
+    if (seccion === 'inventario') $('#buscar').focus();
     // La impresora de este equipo se reconecta sola (sin abrir la lista) si el navegador lo permite.
     if (window.Impresora?.ajustes().id) window.Impresora.reconectar();
     iniciarSincronizacion();
     await Promise.all([cargarTasa(), cargarCategorias(), cargarEstadoDia(), cargarInventario()]);
-    $('#buscar').focus();
   }
 
   $('#form-login').addEventListener('submit', (e) => {
@@ -332,7 +335,9 @@
     $('#tasa-fecha').textContent = estado.tasa
       ? `Actualizada: ${fmtFecha.format(new Date(data.actualizado_en))}`
       : 'El administrador debe definir la tasa';
-    pintarProductos();   // recalcula la columna en dólares
+    // Solo se recalcula la columna en dólares: la lista no se redibuja, así no se pierde un toque
+    // que llegue justo cuando carga la tasa.
+    document.querySelectorAll('#tabla-cuerpo .precio-usd').forEach((td) => { td.textContent = enDolares(td.dataset.cop); });
   }
 
   function previsualizarTasa() {
@@ -679,7 +684,7 @@
         el('div', { class: p.categoria ? 'producto-categoria' : 'producto-categoria sin-categoria' }, p.categoria || 'Sin categoría')),
       el('td', { class: 'num', 'data-label': 'Cantidad' }, etiquetaCantidad(p.cantidad)),
       el('td', { class: 'num precio', 'data-label': 'Precio COP' }, fmtCOP.format(p.precio_cop)),
-      el('td', { class: 'num precio precio-usd', 'data-label': 'Precio USD' }, enDolares(p.precio_cop)),
+      el('td', { class: 'num precio precio-usd', 'data-label': 'Precio USD', 'data-cop': p.precio_cop }, enDolares(p.precio_cop)),
       el('td', { class: 'col-acciones' },
         botonAgregar(p),
         esAdmin ? el('button', { type: 'button', class: 'btn btn-secundario btn-sm', title: 'Entrada o salida de mercancía', onclick: () => abrirMovimiento(p) }, 'Entrada/Salida') : null,
@@ -699,7 +704,15 @@
     const total = estado.resultados.length;
     const hayBusqueda = estado.busqueda.trim() !== '';
 
+    // Al repintar, el foco sigue en el mismo botón (Agregar o −) para seguir con el teclado.
+    const activo = document.activeElement?.closest?.('#tabla-cuerpo [data-accion]');
+    const clave = activo && { id: activo.dataset.id, accion: activo.dataset.accion };
     $('#tabla-cuerpo').replaceChildren(...estado.productos.map(filaProducto));
+    if (clave) {
+      const cuerpo = $('#tabla-cuerpo');
+      (cuerpo.querySelector(`[data-id="${clave.id}"][data-accion="${clave.accion}"]`)
+        || cuerpo.querySelector(`[data-id="${clave.id}"][data-accion="agregar"]`))?.focus({ preventScroll: true });
+    }
 
     const vacio = $('#vacio');
     vacio.hidden = total > 0;
@@ -885,12 +898,33 @@
     }
     const lleno = enCarrito >= p.cantidad;
     // Lleno no se desactiva: al tocarlo explica por qué no deja agregar más.
-    return el('button', {
+    const agregar = el('button', {
       type: 'button',
       class: `btn btn-sm btn-vender ${enCarrito ? 'btn-en-carrito' : 'btn-primario'}${lleno ? ' btn-lleno' : ''}`,
       title: lleno ? 'Ya están en el carrito todas las unidades disponibles' : 'Agregar una unidad al carrito',
+      'data-id': p.id,
+      'data-accion': 'agregar',
       onclick: () => agregarAlCarrito(p),
     }, enCarrito ? `Agregar (${enCarrito})` : 'Agregar');
+    if (!enCarrito) return agregar;
+    // Ya está en el carrito: "−" al lado para quitar una unidad sin abrir el carrito.
+    return el('span', { class: 'grupo-carrito' },
+      el('button', {
+        type: 'button',
+        class: 'btn btn-sm btn-en-carrito btn-quitar',
+        title: 'Quitar una unidad del carrito',
+        'aria-label': `Quitar una unidad de ${p.nombre} del carrito`,
+        'data-id': p.id,
+        'data-accion': 'quitar',
+        onclick: () => quitarDelCarrito(p),
+      }, '−'),
+      agregar);
+  }
+
+  function quitarDelCarrito(p) {
+    cambiarCantidad(p.id, -1);
+    const queda = estado.carrito.get(p.id)?.cantidad || 0;
+    anunciar(queda ? `${p.nombre}: ${queda} en el carrito.` : `${p.nombre} quitado del carrito.`);
   }
 
   // Aviso cuando el carrito ya tiene todas las unidades disponibles de un producto.

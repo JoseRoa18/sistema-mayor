@@ -924,3 +924,26 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
   }
   .btn:active:not(:disabled) { transform: none; }
 }
+
+/* Agregar y quitar desde la lista, como un solo control: [ − | Agregar (2) ] */
+.grupo-carrito { display: inline-flex; vertical-align: middle; }
+.col-acciones .grupo-carrito .btn + .btn { margin-left: 0; }
+.col-acciones .grupo-carrito + .btn { margin-left: 4px; }
+.btn-quitar {
+  width: 34px; padding: 0; font-size: 18px; line-height: 1;
+  border-right-width: 0; border-top-right-radius: 0; border-bottom-right-radius: 0;
+}
+.grupo-carrito .btn-vender {
+  border-top-left-radius: 0; border-bottom-left-radius: 0;
+  border-left-color: color-mix(in srgb, var(--primario) 30%, transparent);
+}
+body[data-rol="atencion"] .btn-quitar { width: 46px; height: 46px; font-size: 24px; }
+@media (pointer: coarse) {
+  .btn-quitar { width: 44px; }
+  .col-acciones .grupo-carrito .btn + .btn { margin-left: 0; }
+  .col-acciones .grupo-carrito + .btn { margin-left: 8px; }
+}
+@media (max-width: 720px) {
+  .tabla td.col-acciones .grupo-carrito { display: flex; flex: 1; }
+  .tabla td.col-acciones .grupo-carrito .btn-vender { flex: 1; }
+}

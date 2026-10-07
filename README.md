@@ -128,7 +128,9 @@ para leer la información de un vistazo o mostrársela al cliente.
 
 El botón **Agregar** de cada producto lo pone en el carrito (cada clic suma una unidad, sin
 pasar de lo disponible). Cuando ya están en el carrito todas las unidades disponibles, el botón
-se ve apagado y, si se toca, un aviso explica que no hay más unidades. Abajo aparece la barra del carrito con el total; con **Ver carrito y
+se ve apagado y, si se toca, un aviso explica que no hay más unidades. Cuando un producto ya está
+en el carrito, a su lado aparece **−** (`[ − | Agregar (2) ]`) para quitar una unidad sin abrir
+el carrito; al llegar a cero desaparece. Abajo aparece la barra del carrito con el total; con **Ver carrito y
 cobrar** se ajustan las cantidades, se quitan productos y el vendedor escribe **su código** una
 sola vez. Al confirmar, toda la venta queda registrada con **un mismo número (#)** a su nombre
 y se **descuenta del inventario automáticamente**.
