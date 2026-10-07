@@ -88,9 +88,10 @@
   // Aviso flotante. Puede llevar un botón (accion = { texto, alHacer }), por ejemplo "Imprimir ticket".
   function toast(mensaje, tipo = 'ok', accion = null) {
     const nodo = $('#toast');
-    nodo.replaceChildren(el('span', {}, mensaje), accion
+    // (replaceChildren escribiría "null": por eso se filtran los vacíos)
+    nodo.replaceChildren(...[el('span', {}, mensaje), accion
       ? el('button', { type: 'button', class: 'toast-accion', onclick: () => { ocultarToast(); accion.alHacer(); } }, accion.texto)
-      : null);
+      : null].filter(Boolean));
     nodo.dataset.tipo = tipo;
     nodo.hidden = false;
     // En la capa superior: así se ve también encima de un diálogo abierto.
@@ -144,6 +145,8 @@
 
     mostrarVista('app');
     mostrarSeccion('inventario');
+    // La impresora de este equipo se reconecta sola (sin abrir la lista) si el navegador lo permite.
+    if (window.Impresora?.ajustes().id) window.Impresora.reconectar();
     await Promise.all([cargarTasa(), cargarCategorias(), cargarEstadoDia(), buscar('')]);
     $('#buscar').focus();
   }
@@ -856,8 +859,8 @@
       texto = `Estás usando ${n.nombre}, que no puede conectarse a la impresora por Bluetooth. `
         + (n.android ? 'Abre la página en Google Chrome:' : 'Abre la página en Google Chrome o Microsoft Edge.');
     }
-    $('#impresora-no-soportada').replaceChildren(el('span', {}, texto),
-      n.android ? el('a', { class: 'btn btn-primario btn-sm btn-abrir-chrome', href: enChrome }, 'Abrir en Chrome') : null);
+    $('#impresora-no-soportada').replaceChildren(...[el('span', {}, texto),
+      n.android ? el('a', { class: 'btn btn-primario btn-sm btn-abrir-chrome', href: enChrome }, 'Abrir en Chrome') : null].filter(Boolean));
   }
 
   function abrirImpresora(ticket) {
@@ -1145,14 +1148,14 @@
       $('#cierre-hecho').hidden = false;
       $('#cierre-hecho-texto').textContent =
         `${mayuscula(fmtDiaLargo.format(aFecha(c.fecha)))} · cerrado por ${c.cerrado_por} a las ${fmtHora.format(new Date(c.cerrado_en))}`;
-      $('#cierre-hecho-totales').replaceChildren(
+      $('#cierre-hecho-totales').replaceChildren(...[
         el('li', {}, el('span', {}, 'Total vendido'), el('strong', {}, fmtCOP.format(t.total))),
         el('li', {}, el('span', {}, 'Ventas'), el('strong', {}, fmtNumero.format(t.ventas))),
         el('li', {}, el('span', {}, 'Unidades'), el('strong', {}, fmtNumero.format(t.unidades))),
         t.lineas_anuladas ? el('li', {}, el('span', {}, 'Líneas anuladas'), el('strong', {}, fmtNumero.format(t.lineas_anuladas))) : null,
         t.primer_consecutivo ? el('li', {}, el('span', {}, 'Consecutivos'), el('strong', {}, `${t.primer_consecutivo} a ${t.ultimo_consecutivo}`)) : null,
         ...t.por_vendedor.map((v) => el('li', { class: 'cierre-vendedor' }, el('span', {}, v.vendedor), el('strong', {}, `${fmtNumero.format(v.ventas)} · ${fmtCOP.format(v.total)}`))),
-      );
+      ].filter(Boolean));
       cargarEstadoDia();
       if (!$('#seccion-cierre').hidden) cargarCierre();
     });

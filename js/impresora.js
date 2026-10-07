@@ -236,23 +236,49 @@
     return true;
   }
 
-  // Vuelve a conectar la impresora de siempre sin abrir la lista (si el navegador lo permite).
-  async function reconectar() {
-    if (estado().conectada) return true;
-    if (!navigator.bluetooth) return false;
+  // Vuelve a conectar la impresora de siempre sin abrir la lista. Después de recargar la página
+  // solo se puede si Chrome recuerda los permisos (getDevices; ver README).
+  let reconectando = null;   // un solo intento a la vez
+  function reconectar() {
+    if (estado().conectada) return Promise.resolve(true);
+    if (!navigator.bluetooth) return Promise.resolve(false);
+    if (!reconectando) reconectando = intentarReconectar().finally(() => { reconectando = null; });
+    return reconectando;
+  }
+
+  async function intentarReconectar() {
     try {
-      if (!dispositivo && navigator.bluetooth.getDevices) {
-        const { id } = ajustes();
+      if (!dispositivo && navigator.bluetooth.getDevices && ajustes().id) {
         const conocidos = await navigator.bluetooth.getDevices();
-        const d = conocidos.find((x) => x.id === id);
+        const d = conocidos.find((x) => x.id === ajustes().id);
         if (d) prepararDispositivo(d);
       }
       if (!dispositivo) return false;
-      await abrirCanal();
+      try {
+        await abrirCanal();
+      } catch (error) {
+        // Chrome a veces necesita "oír" a la impresora antes de poder conectarse.
+        if (!dispositivo.watchAdvertisements) throw error;
+        await esperarAnuncio(dispositivo, 8000);
+        await abrirCanal();
+      }
       return true;
     } catch {
       return false;
     }
+  }
+
+  function esperarAnuncio(d, ms) {
+    return new Promise((resolver, rechazar) => {
+      const controlador = new AbortController();
+      const tiempo = setTimeout(() => { controlador.abort(); rechazar(new Error('La impresora no responde.')); }, ms);
+      d.addEventListener('advertisementreceived', () => {
+        clearTimeout(tiempo);
+        controlador.abort();
+        resolver();
+      }, { once: true });
+      d.watchAdvertisements({ signal: controlador.signal }).catch((error) => { clearTimeout(tiempo); rechazar(error); });
+    });
   }
 
   function desconectar() {

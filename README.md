@@ -149,6 +149,18 @@ comprueba que todo sale bien.
 - **Intensidad** (clara, normal u oscura) y **modo compatible** (más lento, por si el ticket sale
   cortado o con rayas). Se guardan en cada equipo.
 
+**En el computador (impresión automática todo el día):**
+
+1. La impresora no se agrega en *Configuración de Windows → Bluetooth*: se conecta desde la página.
+   Si ya está agregada ahí, quitarla. Tampoco debe estar conectada al teléfono al mismo tiempo
+   (la impresora acepta una sola conexión).
+2. En Chrome, abrir `chrome://flags/#enable-web-bluetooth-new-permissions-backend`, ponerlo en
+   **Enabled** y tocar **Relaunch**. Con eso Chrome recuerda la impresora y la página la
+   reconecta sola cada vez que se abre o se recarga. Sin ese ajuste también funciona, pero
+   después de recargar la página hay que tocar una vez **Conectar e imprimir**.
+3. Conectarla una vez desde el botón de la impresora y dejar marcado **Imprimir el ticket
+   automáticamente**. Desde ahí cada venta imprime sola.
+
 Funciona con **Google Chrome** (o Edge) en Android o en el computador, que pueden usar Bluetooth
 desde una página web. En **iPhone** no se puede: ahí **Guardar o compartir imagen** manda la
 imagen del ticket a la app de la impresora para imprimirla desde allí.
