@@ -131,9 +131,14 @@ completa no gasta número). Los tickets, reportes y PDF muestran los dos.
 
 ### Impresora de tickets (mini impresora térmica Bluetooth "gatito")
 
-Después de cada venta se imprime un ticket de 57 mm con: **número del ticket** (el del día) y
-consecutivo, **fecha y hora**, el **código de cada producto en grande** con su cantidad, el
-nombre del producto recortado a dos renglones, el **total** y el **vendedor**.
+Después de cada venta se imprime un ticket en papel térmico **continuo de 57 mm** (no de etiquetas)
+con: **número del ticket** (el del día), **fecha y hora**, el **código de cada producto en grande**
+con su cantidad, el nombre recortado a dos renglones, el **precio** (cantidad × precio unitario y
+subtotal), el **total** y el **vendedor**.
+
+El largo depende de cuántos productos tenga: con 1 producto mide unos 5 cm, con 3 unos 9 cm. Desde
+7 productos se imprime más compacto (código más pequeño y nombre en un renglón) para ahorrar papel:
+25 productos ocupan unos 40 cm. Al final sale 1,4 cm de papel en blanco para poder cortarlo.
 
 **Conectarla (una vez por equipo):** encender la impresora, tocar el botón de la impresora en la
 barra de arriba y luego **Conectar impresora**; aparece en la lista con un nombre como GB02,

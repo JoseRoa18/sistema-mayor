@@ -734,8 +734,8 @@
   const ticketDePrueba = () => ({
     prueba: true, numeroDia: 1, consecutivo: null, fecha: new Date().toISOString(),
     lineas: [
-      { codigo: 'L-2054', nombre: 'CAMISA LAVADORA MABE FLOTADOR ALADO', cantidad: 2 },
-      { codigo: 'V-3013', nombre: 'CUCHILLA LICUADORA OSTER ORIGINAL + CUADRANTE', cantidad: 1 },
+      { codigo: 'L-2054', nombre: 'CAMISA LAVADORA MABE FLOTADOR ALADO', cantidad: 2, precio: 73000, subtotal: 146000 },
+      { codigo: 'V-3013', nombre: 'CUCHILLA LICUADORA OSTER ORIGINAL + CUADRANTE', cantidad: 1, precio: 30000, subtotal: 30000 },
     ],
     total: 176000, vendedor: 'Prueba',
   });
@@ -748,7 +748,11 @@
       fecha: r.lineas[0]?.vendido_en || new Date().toISOString(),
       lineas: r.lineas.map((l) => {
         const p = carrito.get(l.producto_id)?.producto || {};
-        return { codigo: l.codigo ?? p.codigo, nombre: l.nombre ?? p.nombre, cantidad: l.cantidad };
+        const precio = Number(l.precio_unitario ?? p.precio_cop);
+        return {
+          codigo: l.codigo ?? p.codigo, nombre: l.nombre ?? p.nombre, cantidad: l.cantidad,
+          precio, subtotal: Number(l.total ?? precio * l.cantidad),
+        };
       }),
       total: r.total,
       vendedor: r.vendedor,
@@ -762,7 +766,10 @@
       numeroDia: v.numero_dia ?? v.numero,
       consecutivo: v.numero,
       fecha: v.vendido_en,
-      lineas: vigentes.map((l) => ({ codigo: l.codigo, nombre: l.nombre, cantidad: l.cantidad })),
+      lineas: vigentes.map((l) => ({
+        codigo: l.codigo, nombre: l.nombre, cantidad: l.cantidad,
+        precio: Number(l.precio_unitario), subtotal: Number(l.total),
+      })),
       total: v.total,
       vendedor: v.vendedor,
       reimpresion: true,
@@ -924,7 +931,8 @@
   $('#btn-impresora-imagen').addEventListener('click', async () => {
     const t = ticketVista;
     const blob = await new Promise((r) => Impresora.imagenTicket(t).toBlob(r, 'image/png'));
-    const nombre = t.prueba ? 'Ticket-prueba.png' : `Ticket-${t.numeroDia}-consecutivo-${t.consecutivo}.png`;
+    const dia = new Intl.DateTimeFormat('en-CA', { timeZone: ZONA }).format(new Date(t.fecha));
+    const nombre = t.prueba ? 'Ticket-prueba.png' : `Ticket-${t.numeroDia}-${dia}.png`;
     const archivo = new File([blob], nombre, { type: 'image/png' });
     if (matchMedia('(pointer: coarse)').matches && navigator.canShare?.({ files: [archivo] })) {
       try { await navigator.share({ files: [archivo], title: nombre }); return; }

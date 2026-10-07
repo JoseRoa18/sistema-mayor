@@ -400,12 +400,18 @@
     return tam;
   }
 
-  // ticket = { numeroDia, consecutivo, fecha, lineas: [{ codigo, nombre, cantidad }], total, vendedor,
-  //            reimpresion, prueba }
+  // ticket = { numeroDia, consecutivo, fecha, lineas: [{ codigo, nombre, cantidad, precio, subtotal }],
+  //            total, vendedor, reimpresion, prueba }
+  // Con muchos productos (más de 6) el ticket va más compacto para no gastar tanto papel.
+  const COMPACTO_DESDE = 7;
+  const MAX_ALTO = 32000;   // límite de alto de un lienzo en el navegador (≈ 4 m de papel)
   function dibujarTicket(t) {
+    const compacto = t.lineas.length >= COMPACTO_DESDE;
+    const alto = 460 + t.lineas.length * (compacto ? 150 : 240);   // de sobra; al final se recorta
+    if (alto > MAX_ALTO) throw new Error(`El ticket tiene demasiados productos (${t.lineas.length}) para imprimirlo de una vez.`);
     const lienzo = document.createElement('canvas');
     lienzo.width = ANCHO;
-    lienzo.height = 420 + t.lineas.length * 190;   // de sobra; al final se recorta
+    lienzo.height = alto;
     const ctx = lienzo.getContext('2d');
     ctx.fillStyle = '#fff';
     ctx.fillRect(0, 0, lienzo.width, lienzo.height);
@@ -428,32 +434,47 @@
       y += grosor + 8;
     };
 
-    // Encabezado: número del ticket, consecutivo, fecha y hora
+    // Encabezado: número del ticket, fecha y hora
     if (t.prueba) centrado('PRUEBA DE IMPRESIÓN', 26);
     centrado(`TICKET #${t.numeroDia ?? t.consecutivo ?? '-'}`, 50);
-    if (t.consecutivo != null) centrado(`Consecutivo ${t.consecutivo}`, 20, 'normal');
     const fecha = new Date(t.fecha || Date.now());
     centrado(`${fmtFecha.format(fecha)}   ${limpio(fmtHora.format(fecha))}`, 26);
     raya();
 
-    // Productos: cantidad y código en grande, el nombre recortado debajo
+    // Productos: cantidad y código en grande, el nombre recortado y el precio
+    const letra = compacto
+      ? { cantidad: 24, codigo: 40, nombre: 22, renglones: 1, precio: 22 }
+      : { cantidad: 30, codigo: 56, nombre: 24, renglones: 2, precio: 24 };
     t.lineas.forEach((l, i) => {
       if (i > 0) raya(2, true);
       const cantidad = `${l.cantidad}×`;
       ctx.textAlign = 'left';
-      ctx.font = `bold 30px ${SANS}`;
+      ctx.font = `bold ${letra.cantidad}px ${SANS}`;
       const anchoCantidad = ctx.measureText(cantidad).width + 12;
       const codigo = limpio(l.codigo || 'SIN CÓDIGO');
-      const tam = ajustarLetra(ctx, codigo, 56, 26, util - anchoCantidad);
-      ctx.font = `bold 30px ${SANS}`;
-      ctx.fillText(cantidad, M, y + Math.max(0, (tam - 30) * 0.75));
+      const tam = ajustarLetra(ctx, codigo, letra.codigo, 24, util - anchoCantidad);
+      ctx.font = `bold ${letra.cantidad}px ${SANS}`;
+      ctx.fillText(cantidad, M, y + Math.max(0, (tam - letra.cantidad) * 0.75));
       ctx.font = `bold ${tam}px ${SANS}`;
       ctx.fillText(codigo, M + anchoCantidad, y);
       y += Math.round(tam * 1.12);
-      ctx.font = `bold 24px ${SANS}`;
-      for (const r of renglones(ctx, l.nombre, util, 2)) {
+      ctx.font = `bold ${letra.nombre}px ${SANS}`;
+      for (const r of renglones(ctx, l.nombre, util, letra.renglones)) {
         ctx.fillText(r, M, y);
-        y += 28;
+        y += letra.nombre + 4;
+      }
+      // Precio: "2 × $ 73.000" a la izquierda y el subtotal a la derecha
+      if (l.precio != null) {
+        const subtotal = limpio(fmtCOP.format(Number(l.subtotal ?? l.precio * l.cantidad)));
+        ctx.font = `bold ${letra.precio + 2}px ${SANS}`;
+        const anchoSubtotal = ctx.measureText(subtotal).width;
+        ctx.textAlign = 'right';
+        ctx.fillText(subtotal, ANCHO - M, y + 2);
+        const unitario = limpio(`${l.cantidad} × ${fmtCOP.format(Number(l.precio))}`);
+        ajustarLetra(ctx, unitario, letra.precio, 14, util - anchoSubtotal - 16, 'normal');
+        ctx.textAlign = 'left';
+        ctx.fillText(unitario, M, y + 4);
+        y += letra.precio + 12;
       }
     });
     raya();
