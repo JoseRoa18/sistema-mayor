@@ -658,6 +658,7 @@ body[data-rol="atencion"] .ticket-lineas .codigo { padding: 1px 7px; font-size: 
 .impresora-estado.conectada { color: var(--ok-texto); }
 .impresora-acciones { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
 .impresora-ayuda .enlace-venta { font-weight: 600; font-size: 14px; }
+.btn-abrir-chrome { display: flex; width: max-content; margin-top: 10px; text-decoration: none; }
 .segmentado-3 { grid-template-columns: repeat(3, 1fr); margin-bottom: 0; }
 
 /* Vista previa: el papel siempre blanco, también en modo oscuro */

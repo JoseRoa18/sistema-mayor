@@ -817,6 +817,7 @@
     const a = Impresora.ajustes();
     const form = $('#form-impresora');
     $('#impresora-no-soportada').hidden = e.soportada;
+    if (!e.soportada) pintarSinBluetooth();
     const estadoTexto = $('#impresora-estado');
     estadoTexto.textContent = !e.soportada ? 'Sin Bluetooth en este navegador.'
       : e.ocupada ? `Imprimiendo en ${e.nombre}…`
@@ -835,6 +836,28 @@
     form.auto.checked = a.auto;
     form.compatible.checked = a.compatible;
     form.querySelector(`[name="intensidad"][value="${a.intensidad}"]`).checked = true;
+  }
+
+  // Sin Bluetooth: por qué y qué hacer, según el navegador (en Android, abrir la página en Chrome).
+  function pintarSinBluetooth() {
+    const n = Impresora.navegador();
+    const enChrome = `intent://${location.host}${location.pathname}#Intent;scheme=https;package=com.android.chrome;`
+      + `S.browser_fallback_url=${encodeURIComponent('https://play.google.com/store/apps/details?id=com.android.chrome')};end`;
+    let texto;
+    if (n.ios) {
+      texto = 'En iPhone y iPad no se puede conectar la impresora desde una página web: Apple no lo permite, ni en Safari ni en Chrome. '
+        + 'Toca "Guardar o compartir imagen" y elige la app de la impresora para imprimir el ticket.';
+    } else if (n.brave) {
+      texto = 'En Brave el Bluetooth para páginas viene apagado. Abre la página en Google Chrome '
+        + '(o en Brave: escribe brave://flags, busca "Web Bluetooth API", ponlo en Enabled y reinicia Brave).';
+    } else if (!n.seguro) {
+      texto = 'La página debe abrirse con https:// para poder usar Bluetooth.';
+    } else {
+      texto = `Estás usando ${n.nombre}, que no puede conectarse a la impresora por Bluetooth. `
+        + (n.android ? 'Abre la página en Google Chrome:' : 'Abre la página en Google Chrome o Microsoft Edge.');
+    }
+    $('#impresora-no-soportada').replaceChildren(el('span', {}, texto),
+      n.android ? el('a', { class: 'btn btn-primario btn-sm btn-abrir-chrome', href: enChrome }, 'Abrir en Chrome') : null);
   }
 
   function abrirImpresora(ticket) {

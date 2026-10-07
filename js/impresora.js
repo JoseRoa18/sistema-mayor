@@ -110,6 +110,27 @@
 
   const tipoDe = (nombre) => (/^MXW/i.test(nombre || '') ? 'mxw01' : 'clasico');
 
+  // Qué navegador es (para explicar por qué no hay Bluetooth y ofrecer una salida).
+  function navegador() {
+    const ua = navigator.userAgent || '';
+    const ios = /iPhone|iPad|iPod/i.test(ua) || (/Macintosh/.test(ua) && navigator.maxTouchPoints > 1);
+    const android = /Android/i.test(ua);
+    let nombre = 'este navegador';
+    if (navigator.brave) nombre = 'Brave';
+    else if (/SamsungBrowser/i.test(ua)) nombre = 'Samsung Internet';
+    else if (/FBAN|FBAV|FB_IAB/i.test(ua)) nombre = 'el navegador de Facebook';
+    else if (/Instagram/i.test(ua)) nombre = 'el navegador de Instagram';
+    else if (/WhatsApp/i.test(ua)) nombre = 'el navegador de WhatsApp';
+    else if (/MiuiBrowser/i.test(ua)) nombre = 'el navegador de Xiaomi';
+    else if (/HuaweiBrowser/i.test(ua)) nombre = 'el navegador de Huawei';
+    else if (/Firefox|FxiOS/i.test(ua)) nombre = 'Firefox';
+    else if (/OPR\/|Opera/i.test(ua)) nombre = 'Opera';
+    else if (/; wv\)/.test(ua)) nombre = 'el navegador de otra aplicación';
+    else if (/CriOS/i.test(ua)) nombre = 'Chrome de iPhone';
+    else if (/Safari/i.test(ua) && !/Chrome|Chromium/i.test(ua)) nombre = 'Safari';
+    return { ios, android, brave: Boolean(navigator.brave), nombre, seguro: window.isSecureContext !== false };
+  }
+
   // ---------------- Conexión Bluetooth ----------------
 
   let dispositivo = null;
@@ -187,11 +208,21 @@
         filters: [{ services: [SERVICIO_ANUNCIO] }, { services: [SERVICIO] }, ...PREFIJOS.map((p) => ({ namePrefix: p }))],
         optionalServices: [SERVICIO, SERVICIO_ANUNCIO],
       };
+    // Sin adaptador o con el Bluetooth apagado: decirlo en vez de no hacer nada.
+    if (navigator.bluetooth.getAvailability && !(await navigator.bluetooth.getAvailability().catch(() => true))) {
+      throw new Error('El Bluetooth de este equipo está apagado o no está disponible. Enciéndelo y vuelve a tocar "Conectar impresora".');
+    }
     let elegido;
     try {
       elegido = await navigator.bluetooth.requestDevice(opciones);
     } catch (error) {
-      if (error.name === 'NotFoundError') return false;   // cerró la lista sin elegir
+      if (error.name === 'NotFoundError' && /cancel/i.test(error.message)) return false;   // cerró la lista sin elegir
+      if (error.name === 'NotFoundError') {
+        throw new Error('No se pudo buscar la impresora: enciende el Bluetooth del equipo (en Android también la Ubicación) y vuelve a intentar.');
+      }
+      if (error.name === 'SecurityError' || error.name === 'NotAllowedError') {
+        throw new Error('El navegador no dio permiso para usar Bluetooth. En Android: Ajustes → Aplicaciones → Chrome → Permisos → activa "Dispositivos cercanos" y "Ubicación".');
+      }
       throw error;
     }
     prepararDispositivo(elegido);
@@ -447,6 +478,7 @@
 
   window.Impresora = {
     estado,
+    navegador,
     ajustes,
     guardarAjustes,
     conectar,
