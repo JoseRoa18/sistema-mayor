@@ -829,7 +829,7 @@ body[data-rol="atencion"] .btn-vender { height: 46px; min-width: 110px; padding:
    ================================================================ */
 
 /* El foco del teclado no queda escondido debajo de la barra fija de arriba ni de la del carrito */
-html { scroll-padding-top: 76px; }
+html { scroll-padding-top: 76px; scrollbar-gutter: stable; }
 html:has(body.con-carrito) { scroll-padding-bottom: 112px; }
 
 /* Pantallas de carga e inicio: alto real de la pantalla en el celular (sin la barra del navegador) */
@@ -925,8 +925,13 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
   .btn:active:not(:disabled) { transform: none; }
 }
 
-/* Agregar y quitar desde la lista, como un solo control: [ − | Agregar (2) ] */
-.grupo-carrito { display: inline-flex; vertical-align: middle; }
+/* Agregar y quitar desde la lista, como un solo control: [ − | Agregar (2) ].
+   Ancho fijo (con o sin el "−", y sin importar el número): al agregar no se mueve nada. */
+/* Anchos medidos para que quepa hasta "Agregar (999)" con el "−" al lado. */
+.grupo-carrito { display: inline-flex; vertical-align: middle; width: var(--ancho-agregar, 152px); }
+.grupo-carrito .btn-vender { flex: 1; min-width: 0; overflow: hidden; text-overflow: ellipsis; font-variant-numeric: tabular-nums; }
+body[data-rol="atencion"] .grupo-carrito { --ancho-agregar: 212px; }
+@media (pointer: coarse) { .grupo-carrito { --ancho-agregar: 168px; } }
 .col-acciones .grupo-carrito .btn + .btn { margin-left: 0; }
 .col-acciones .grupo-carrito + .btn { margin-left: 4px; }
 /* El "−" en rojo suave (como las demás acciones de quitar) para distinguirlo de "Agregar" */
@@ -937,7 +942,7 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
   border-right-width: 0; border-top-right-radius: 0; border-bottom-right-radius: 0;
 }
 .btn-quitar:hover:not(:disabled) { background: color-mix(in srgb, var(--peligro-suave) 70%, var(--peligro) 18%); }
-.grupo-carrito .btn-vender {
+.btn-quitar + .btn-vender {
   border-top-left-radius: 0; border-bottom-left-radius: 0;
   border-left-color: color-mix(in srgb, var(--primario) 30%, transparent);
 }
@@ -948,6 +953,38 @@ body[data-rol="atencion"] .btn-quitar { width: 46px; height: 46px; font-size: 24
   .col-acciones .grupo-carrito + .btn { margin-left: 8px; }
 }
 @media (max-width: 720px) {
-  .tabla td.col-acciones .grupo-carrito { display: flex; flex: 1; }
+  .tabla td.col-acciones .grupo-carrito { display: flex; flex: 1; width: auto; }
   .tabla td.col-acciones .grupo-carrito .btn-vender { flex: 1; }
 }
+
+/* Colores de las categorías: pastel (no chillones), con el texto en el mismo tono para leerse bien.
+   Lavadora azul, Refrigeración celeste, Cocina durazno, Varios lila; las nuevas, en orden. */
+:root {
+  --cat-azul-fondo: #dbeafe;    --cat-azul-texto: #1e40af;
+  --cat-cian-fondo: #cffafe;    --cat-cian-texto: #155e75;
+  --cat-durazno-fondo: #ffedd5; --cat-durazno-texto: #9a3412;
+  --cat-lila-fondo: #ede9fe;    --cat-lila-texto: #5b21b6;
+  --cat-rosa-fondo: #fce7f3;    --cat-rosa-texto: #9d174d;
+  --cat-lima-fondo: #ecfccb;    --cat-lima-texto: #3f6212;
+  --cat-indigo-fondo: #e0e7ff;  --cat-indigo-texto: #3730a3;
+  --cat-piedra-fondo: #f1f5f9;  --cat-piedra-texto: #334155;
+}
+:root[data-tema="oscuro"] {
+  --cat-azul-fondo: #172554;    --cat-azul-texto: #93c5fd;
+  --cat-cian-fondo: #083344;    --cat-cian-texto: #67e8f9;
+  --cat-durazno-fondo: #431407; --cat-durazno-texto: #fdba74;
+  --cat-lila-fondo: #2e1065;    --cat-lila-texto: #c4b5fd;
+  --cat-rosa-fondo: #500724;    --cat-rosa-texto: #f9a8d4;
+  --cat-lima-fondo: #1a2e05;    --cat-lima-texto: #bef264;
+  --cat-indigo-fondo: #1e1b4b;  --cat-indigo-texto: #a5b4fc;
+  --cat-piedra-fondo: #1e293b;  --cat-piedra-texto: #cbd5e1;
+}
+.producto-categoria[data-color="azul"]    { background: var(--cat-azul-fondo);    color: var(--cat-azul-texto); }
+.producto-categoria[data-color="cian"]    { background: var(--cat-cian-fondo);    color: var(--cat-cian-texto); }
+.producto-categoria[data-color="durazno"] { background: var(--cat-durazno-fondo); color: var(--cat-durazno-texto); }
+.producto-categoria[data-color="lila"]    { background: var(--cat-lila-fondo);    color: var(--cat-lila-texto); }
+.producto-categoria[data-color="rosa"]    { background: var(--cat-rosa-fondo);    color: var(--cat-rosa-texto); }
+.producto-categoria[data-color="lima"]    { background: var(--cat-lima-fondo);    color: var(--cat-lima-texto); }
+.producto-categoria[data-color="indigo"]  { background: var(--cat-indigo-fondo);  color: var(--cat-indigo-texto); }
+.producto-categoria[data-color="piedra"]  { background: var(--cat-piedra-fondo);  color: var(--cat-piedra-texto); }
+.vendedor-nombre .producto-categoria { margin-top: 0; font-size: 13px; }

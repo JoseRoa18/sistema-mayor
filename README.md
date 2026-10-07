@@ -121,6 +121,10 @@ se puede cambiar a mano. En el inventario se filtra por categoría con la lista 
 al conteo de productos. El jefe agrega o renombra categorías en **Configuración** (al renombrar,
 los productos de esa categoría se actualizan solos).
 
+Cada categoría tiene su color pastel, en tema claro y oscuro: Lavadora azul, Refrigeración
+celeste, Cocina durazno y Varios lila. Las categorías nuevas toman, en orden, rosa, verde lima,
+índigo y gris piedra.
+
 La vista de **Atención al público** usa letra más grande y todo el ancho de la pantalla,
 para leer la información de un vistazo o mostrársela al cliente.
 

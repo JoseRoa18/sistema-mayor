@@ -571,10 +571,26 @@
   $('#mini-siguiente').addEventListener('click', () => irAPagina(estado.pagina + 1));
 
   // Categorías: llenan el filtro del inventario, el formulario y "Precios en bloque".
+  // Color pastel de cada categoría: las cuatro de siempre tienen el suyo; las que cree el jefe
+  // toman los que quedan, en orden.
+  const COLOR_FIJO = { L: 'azul', R: 'cian', C: 'durazno', V: 'lila' };
+  const COLORES_EXTRA = ['rosa', 'lima', 'indigo', 'piedra'];
+  function colorDeCategoria(nombre, lista = estado.categorias) {
+    const c = lista.find((x) => x.nombre === nombre);
+    if (!c) return '';
+    if (COLOR_FIJO[c.prefijo]) return COLOR_FIJO[c.prefijo];
+    const extras = lista.filter((x) => !COLOR_FIJO[x.prefijo]);
+    return COLORES_EXTRA[extras.indexOf(c) % COLORES_EXTRA.length];
+  }
+
   async function cargarCategorias() {
     const { data, error } = await db.rpc('lista_categorias');
     if (error) return;
     estado.categorias = data;
+    // Los productos ya dibujados toman su color sin redibujar la lista.
+    document.querySelectorAll('#tabla-cuerpo .producto-categoria[data-categoria]').forEach((chip) => {
+      chip.dataset.color = colorDeCategoria(chip.dataset.categoria);
+    });
     const opciones = (primera) => [el('option', { value: '' }, primera),
       ...data.map((c) => el('option', { value: c.nombre }, `${c.prefijo} · ${c.nombre}`))];
     const filtro = $('#filtro-categoria');
@@ -681,7 +697,9 @@
       el('td', { class: 'col-producto', 'data-label': 'Producto' },
         el('div', { class: 'producto-nombre' }, p.nombre),
         p.descripcion ? el('div', { class: 'producto-desc' }, p.descripcion) : null,
-        el('div', { class: p.categoria ? 'producto-categoria' : 'producto-categoria sin-categoria' }, p.categoria || 'Sin categoría')),
+        p.categoria
+          ? el('div', { class: 'producto-categoria', 'data-categoria': p.categoria, 'data-color': colorDeCategoria(p.categoria) }, p.categoria)
+          : el('div', { class: 'producto-categoria sin-categoria' }, 'Sin categoría')),
       el('td', { class: 'num', 'data-label': 'Cantidad' }, etiquetaCantidad(p.cantidad)),
       el('td', { class: 'num precio', 'data-label': 'Precio COP' }, fmtCOP.format(p.precio_cop)),
       el('td', { class: 'num precio precio-usd', 'data-label': 'Precio USD', 'data-cop': p.precio_cop }, enDolares(p.precio_cop)),
@@ -891,10 +909,13 @@
   // Carrito: se agregan varios productos y se cobran juntos
   // ------------------------------------------------------------------
 
+  // Siempre dentro de un espacio de ancho fijo: al aparecer el "−" o cambiar el número
+  // nada en la tabla se mueve.
   function botonAgregar(p) {
     const enCarrito = estado.carrito.get(p.id)?.cantidad || 0;
     if (p.cantidad <= 0) {
-      return el('button', { type: 'button', class: 'btn btn-secundario btn-sm btn-vender', disabled: '' }, 'Agotado');
+      return el('span', { class: 'grupo-carrito' },
+        el('button', { type: 'button', class: 'btn btn-secundario btn-sm btn-vender', disabled: '' }, 'Agotado'));
     }
     const lleno = enCarrito >= p.cantidad;
     // Lleno no se desactiva: al tocarlo explica por qué no deja agregar más.
@@ -906,7 +927,7 @@
       'data-accion': 'agregar',
       onclick: () => agregarAlCarrito(p),
     }, enCarrito ? `Agregar (${enCarrito})` : 'Agregar');
-    if (!enCarrito) return agregar;
+    if (!enCarrito) return el('span', { class: 'grupo-carrito' }, agregar);
     // Ya está en el carrito: "−" al lado para quitar una unidad sin abrir el carrito.
     return el('span', { class: 'grupo-carrito' },
       el('button', {
@@ -1732,7 +1753,8 @@
   function pintarCategoriasConfig(categorias) {
     $('#config-categorias').replaceChildren(...categorias.map((c) => el('li', {},
       el('span', { class: 'codigo codigo-sm' }, c.prefijo),
-      el('span', { class: 'vendedor-nombre' }, c.nombre),
+      el('span', { class: 'vendedor-nombre' },
+        el('span', { class: 'producto-categoria', 'data-color': colorDeCategoria(c.nombre, categorias) }, c.nombre)),
       el('button', { type: 'button', class: 'btn btn-secundario btn-sm', onclick: () => editarCategoria(c) }, 'Editar'),
     )));
   }
