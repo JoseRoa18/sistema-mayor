@@ -53,6 +53,12 @@ window.Exportar = (function () {
     ? `Cierre-del-dia-${c.desde}.${extension}`
     : `Reporte-${c.desde}_a_${c.hasta}.${extension}`);
   const tituloReporte = (c) => (c.unDia ? 'Cierre del día' : 'Reporte de ventas');
+  // Quién cerró el día (o cuántos días del periodo se cerraron).
+  function textoCierre(c) {
+    const cierres = c.cierres || [];
+    if (!c.unDia) return `${cierres.length} de ${c.dias} días cerrados`;
+    return cierres[0] ? `Cerrado por ${cierres[0].cerrado_por} el ${fechaHora.format(new Date(cierres[0].cerrado_en))}` : 'Día sin cierre';
+  }
   const diaLargo = new Intl.DateTimeFormat('es-CO', { timeZone: 'UTC', dateStyle: 'full' });
   const TIPO_MOVIMIENTO = { entrada: 'Entrada', salida: 'Salida', anulacion: 'Venta anulada' };
   const unidadesDe = (c, tipos) => c.movimientos.filter((m) => tipos.includes(m.tipo)).reduce((s, m) => s + m.cantidad, 0);
@@ -169,6 +175,7 @@ window.Exportar = (function () {
       [`Productos por agotarse (${c.stockBajo} o menos)`, c.porAgotarse.length, FMT_NUM],
       ['Productos agotados', c.porAgotarse.filter((p) => p.cantidad <= 0).length, FMT_NUM],
       ['Tasa del dólar actual (1 USD)', c.tasaActual ?? 'Sin definir', FMT_COP],
+      ['Cierre', textoCierre(c), '@'],
     ];
     indicadores.forEach(([etiqueta, valor, formato, destacado], i) => {
       const fila = resumen.getRow(4 + i);
@@ -192,10 +199,12 @@ window.Exportar = (function () {
     // ---- Hoja: Ventas (detalle) ----
     const hojaVentas = libro.addWorksheet('Ventas');
     const colVentas = [
-      { titulo: 'N.º venta', ancho: 10 },
+      { titulo: 'N.º del día', ancho: 11 },
+      { titulo: 'Consecutivo', ancho: 12 },
       c.unDia ? { titulo: 'Hora', ancho: 11, formato: 'h:mm AM/PM' } : { titulo: 'Fecha y hora', ancho: 19, formato: 'd/mm/yyyy h:mm AM/PM' },
       { titulo: 'Código', ancho: 12 },
-      { titulo: 'Producto', ancho: 42 },
+      { titulo: 'Producto', ancho: 40 },
+      { titulo: 'Categoría', ancho: 15 },
       { titulo: 'Cantidad', ancho: 10, formato: FMT_NUM },
       { titulo: 'Precio unitario', ancho: 16, formato: FMT_COP },
       { titulo: 'Total (pesos)', ancho: 16, formato: FMT_COP },
@@ -204,9 +213,9 @@ window.Exportar = (function () {
       { titulo: 'Estado', ancho: 11 },
     ];
     encabezado(hojaVentas, 'Detalle de ventas', colVentas.length);
-    const ordenadas = [...c.ventas].sort((a, b) => a.vendido_en.localeCompare(b.vendido_en) || a.id - b.id);
+    const ordenadas = [...c.ventas].sort((a, b) => (a.ticket ?? 0) - (b.ticket ?? 0) || a.id - b.id);
     const ultimaVenta = tabla(hojaVentas, 4, colVentas, ordenadas.map((v) => [
-      v.ticket ? `#${v.ticket}` : '', horaLocalParaExcel(v.vendido_en), v.codigo || '', v.nombre, v.cantidad, Number(v.precio_unitario),
+      v.numero_dia ? `#${v.numero_dia}` : '', v.ticket ?? '', horaLocalParaExcel(v.vendido_en), v.codigo || '', v.nombre, v.categoria || '', v.cantidad, Number(v.precio_unitario),
       Number(v.total), v.tasa_usd ? Number(v.total) / Number(v.tasa_usd) : null, v.vendedor, v.anulada_en ? 'Anulada' : 'Vendida',
     ]));
     ordenadas.forEach((v, i) => {
@@ -214,25 +223,87 @@ window.Exportar = (function () {
       hojaVentas.getRow(5 + i).eachCell((celda) => {
         celda.font = { italic: true, strike: true, color: { argb: `FF${COLOR.gris}` } };
       });
-      hojaVentas.getRow(5 + i).getCell(10).font = { bold: true, color: { argb: `FF${COLOR.rojo}` } };
+      hojaVentas.getRow(5 + i).getCell(12).font = { bold: true, color: { argb: `FF${COLOR.rojo}` } };
     });
     if (ordenadas.length) {
       // Los totales suman solo las líneas con estado "Vendida" (no las anuladas).
-      const sumaSi = (col) => `SUMIFS(${col}5:${col}${ultimaVenta},J5:J${ultimaVenta},"Vendida")`;
+      const sumaSi = (col) => `SUMIFS(${col}5:${col}${ultimaVenta},L5:L${ultimaVenta},"Vendida")`;
       filaTotal(hojaVentas, ultimaVenta + 1, [
-        'TOTAL', null, null, `${c.numVentas} ventas`,
-        { formula: sumaSi('E'), result: c.unidades }, null,
-        { formula: sumaSi('G'), result: c.totalCOP },
-        { formula: sumaSi('H'), result: c.totalUSD ?? 0 }, null, null,
+        'TOTAL', null, null, null, `${c.numVentas} ventas`, null,
+        { formula: sumaSi('G'), result: c.unidades }, null,
+        { formula: sumaSi('I'), result: c.totalCOP },
+        { formula: sumaSi('J'), result: c.totalUSD ?? 0 }, null, null,
       ], colVentas);
     } else {
       hojaVentas.getCell(5, 1).value = 'No hubo ventas en este periodo.';
     }
 
+    // ---- Hoja: Ventas detalladas (cada venta con sus productos y su total) ----
+    const hojaDet = libro.addWorksheet('Ventas detalladas', { properties: { tabColor: { argb: `FF${COLOR.texto}` } } });
+    const colDet = [
+      { titulo: 'Código', ancho: 12 },
+      { titulo: 'Producto', ancho: 44 },
+      { titulo: 'Categoría', ancho: 15 },
+      { titulo: 'Cantidad', ancho: 10, formato: FMT_NUM },
+      { titulo: 'Precio unitario', ancho: 16, formato: FMT_COP },
+      { titulo: 'Subtotal', ancho: 16, formato: FMT_COP },
+      { titulo: 'Estado', ancho: 11 },
+    ];
+    encabezado(hojaDet, 'Ventas detalladas', colDet.length);
+    tabla(hojaDet, 4, colDet, []);
+    hojaDet.autoFilter = undefined;
+    const porVenta = new Map();
+    for (const v of [...c.ventas].sort((a, b) => (a.ticket ?? 0) - (b.ticket ?? 0) || a.id - b.id)) {
+      if (!porVenta.has(v.ticket)) porVenta.set(v.ticket, []);
+      porVenta.get(v.ticket).push(v);
+    }
+    let filaDet = 5;
+    for (const [, lineas] of porVenta) {
+      const primera = lineas[0];
+      const anuladas = lineas.filter((l) => l.anulada_en).length;
+      const estadoVenta = anuladas === lineas.length ? 'Anulada' : anuladas ? 'Anulación parcial' : '';
+      // Encabezado de la venta
+      hojaDet.mergeCells(filaDet, 1, filaDet, colDet.length);
+      const cab = hojaDet.getCell(filaDet, 1);
+      cab.value = `Venta #${primera.numero_dia ?? primera.ticket} · consecutivo ${primera.ticket} · `
+        + `${fechaHora.format(new Date(primera.vendido_en))} · vendedor: ${primera.vendedor || '—'}${estadoVenta ? ` · ${estadoVenta.toUpperCase()}` : ''}`;
+      cab.font = { bold: true, color: { argb: `FF${estadoVenta === 'Anulada' ? COLOR.rojo : COLOR.texto}` } };
+      cab.fill = relleno(COLOR.primarioClaro);
+      cab.border = { top: { style: 'thin', color: { argb: `FF${COLOR.primario}` } } };
+      hojaDet.getRow(filaDet).height = 20;
+      filaDet++;
+      // Productos de la venta
+      for (const l of lineas) {
+        const valores = [l.codigo || '', l.nombre, l.categoria || '', l.cantidad, Number(l.precio_unitario), Number(l.total), l.anulada_en ? 'Anulada' : 'Vendida'];
+        valores.forEach((valor, i) => {
+          const celda = hojaDet.getCell(filaDet, i + 1);
+          celda.value = valor;
+          if (colDet[i].formato) { celda.numFmt = colDet[i].formato; celda.alignment = { horizontal: 'right' }; }
+          if (l.anulada_en) celda.font = { italic: true, strike: i < 6, color: { argb: `FF${i === 6 ? COLOR.rojo : COLOR.gris}` } };
+        });
+        filaDet++;
+      }
+      // Total de la venta (sin las líneas anuladas)
+      const totalVenta = lineas.filter((l) => !l.anulada_en).reduce((s, l) => s + Number(l.total), 0);
+      hojaDet.getCell(filaDet, 5).value = 'Total venta';
+      hojaDet.getCell(filaDet, 5).font = { bold: true };
+      hojaDet.getCell(filaDet, 5).alignment = { horizontal: 'right' };
+      hojaDet.getCell(filaDet, 6).value = totalVenta;
+      hojaDet.getCell(filaDet, 6).numFmt = FMT_COP;
+      hojaDet.getCell(filaDet, 6).font = { bold: true };
+      filaDet += 2;
+    }
+    if (porVenta.size) {
+      filaTotal(hojaDet, filaDet, ['TOTAL DEL PERIODO', null, `${c.numVentas} ventas`, c.unidades, null, c.totalCOP, null], colDet);
+    } else {
+      hojaDet.getCell(5, 1).value = 'No hubo ventas en este periodo.';
+    }
+
     // ---- Hoja: Por carrito (una fila por venta) ----
     const hojaCarritos = libro.addWorksheet('Por carrito');
     const colCarritos = [
-      { titulo: 'N.º venta', ancho: 10 },
+      { titulo: 'N.º del día', ancho: 11 },
+      { titulo: 'Consecutivo', ancho: 12 },
       c.unDia ? { titulo: 'Hora', ancho: 11, formato: 'h:mm AM/PM' } : { titulo: 'Fecha y hora', ancho: 19, formato: 'd/mm/yyyy h:mm AM/PM' },
       { titulo: 'Vendedor', ancho: 16 },
       { titulo: 'Productos', ancho: 11, formato: FMT_NUM },
@@ -243,14 +314,14 @@ window.Exportar = (function () {
     encabezado(hojaCarritos, 'Ventas por carrito', colCarritos.length);
     const carritos = [...c.porCarrito].sort((a, b) => (a.ticket ?? 0) - (b.ticket ?? 0));
     const ultimaCarrito = tabla(hojaCarritos, 4, colCarritos, carritos.map((g) => [
-      g.ticket ? `#${g.ticket}` : '', horaLocalParaExcel(g.vendido_en), g.vendedor, g.lineas, g.unidades, g.total, g.estado,
+      g.numero_dia ? `#${g.numero_dia}` : '', g.ticket ?? '', horaLocalParaExcel(g.vendido_en), g.vendedor, g.lineas, g.unidades, g.total, g.estado,
     ]));
     carritos.forEach((g, i) => {
       if (g.estado === 'Completa') return;
-      hojaCarritos.getRow(5 + i).getCell(7).font = { bold: true, color: { argb: `FF${COLOR.rojo}` } };
+      hojaCarritos.getRow(5 + i).getCell(8).font = { bold: true, color: { argb: `FF${COLOR.rojo}` } };
     });
     if (carritos.length) {
-      filaTotal(hojaCarritos, ultimaCarrito + 1, ['TOTAL', null, `${c.numVentas} ventas`, null, c.unidades, c.totalCOP, null], colCarritos);
+      filaTotal(hojaCarritos, ultimaCarrito + 1, ['TOTAL', null, null, `${c.numVentas} ventas`, null, c.unidades, c.totalCOP, null], colCarritos);
     } else {
       hojaCarritos.getCell(5, 1).value = 'No hubo ventas en este periodo.';
     }
@@ -383,14 +454,15 @@ window.Exportar = (function () {
     const colInv = [
       { titulo: 'Código', ancho: 12 },
       { titulo: 'Producto', ancho: 42 },
-      { titulo: 'Descripción', ancho: 36 },
+      { titulo: 'Descripción', ancho: 32 },
+      { titulo: 'Categoría', ancho: 15 },
       { titulo: 'Cantidad', ancho: 10, formato: FMT_NUM },
       { titulo: 'Precio (pesos)', ancho: 16, formato: FMT_COP },
       { titulo: 'Precio (dólares)', ancho: 16, formato: FMT_USD },
     ];
     encabezado(hojaInv, 'Inventario', colInv.length);
     tabla(hojaInv, 4, colInv, inventario.map((p) => [
-      p.codigo || '', p.nombre, p.descripcion || '', p.cantidad, Number(p.precio_cop),
+      p.codigo || '', p.nombre, p.descripcion || '', p.categoria || '', p.cantidad, Number(p.precio_cop),
       c.tasaActual ? Number(p.precio_cop) / c.tasaActual : null,
     ]));
 
@@ -505,7 +577,7 @@ window.Exportar = (function () {
   // ---------------- Reporte: un resumen (el detalle completo va en el Excel) ----------------
   async function pdf(c) {
     const doc = await nuevoPdf(tituloReporte(c), mayuscula(c.periodoTexto),
-      `Generado el ${fechaHora.format(c.generadoEn)} por ${c.generadoPor}`);
+      `Generado el ${fechaHora.format(c.generadoEn)} por ${c.generadoPor} · ${textoCierre(c)}`);
     const ancho = doc.internal.pageSize.getWidth();
 
     // Indicadores
@@ -623,8 +695,8 @@ window.Exportar = (function () {
 
   // ---------------- Una venta (carrito) ----------------
   async function pdfVenta(v) {
-    const doc = await nuevoPdf(`Venta #${v.numero}`, mayuscula(fechaHora.format(new Date(v.vendido_en))),
-      `Vendedor: ${v.vendedor} · generado el ${fechaHora.format(v.generadoEn)} por ${v.generadoPor}`);
+    const doc = await nuevoPdf(`Venta #${v.numero_dia ?? v.numero}`, mayuscula(fechaHora.format(new Date(v.vendido_en))),
+      `Consecutivo ${v.numero} · vendedor: ${v.vendedor} · generado el ${fechaHora.format(v.generadoEn)} por ${v.generadoPor}`);
     const w = escritor(doc, 120);
     if (v.estado !== 'Completa') {
       w.nota(v.estado === 'Anulada'
@@ -652,8 +724,8 @@ window.Exportar = (function () {
     if (v.anulado) detalles.push(`Anulado: ${cop.format(v.anulado)} (no suma en el total).`);
     if (detalles.length) w.nota(detalles.join(' '), false);
 
-    piePaginas(doc, `Sistema Mayor · Venta #${v.numero}`);
-    doc.save(`Venta-${v.numero}.pdf`);
+    piePaginas(doc, `Sistema Mayor · Venta #${v.numero_dia ?? v.numero} (consecutivo ${v.numero})`);
+    doc.save(`Venta-consecutivo-${v.numero}.pdf`);
   }
 
   // ================================================================
@@ -664,12 +736,13 @@ window.Exportar = (function () {
     { clave: 'codigo', titulo: 'Código', ancho: 14 },
     { clave: 'nombre', titulo: 'Nombre', ancho: 46 },
     { clave: 'descripcion', titulo: 'Descripción', ancho: 36 },
+    { clave: 'categoria', titulo: 'Categoría', ancho: 16 },
     { clave: 'cantidad', titulo: 'Cantidad', ancho: 11, formato: FMT_NUM },
     { clave: 'precio', titulo: 'Precio (pesos COP)', ancho: 19, formato: FMT_COP },
   ];
 
   // Plantilla con el inventario actual: se corrige o se completa y se vuelve a subir.
-  async function plantilla(inventario, fecha) {
+  async function plantilla(inventario, fecha, opciones = {}) {
     await cargar('excel');
     const libro = new window.ExcelJS.Workbook();
     libro.creator = 'Sistema Mayor';
@@ -684,7 +757,7 @@ window.Exportar = (function () {
       celda.alignment = { vertical: 'middle' };
     });
     for (const p of inventario) {
-      hoja.addRow({ codigo: p.codigo || '', nombre: p.nombre, descripcion: p.descripcion || '', cantidad: p.cantidad, precio: Number(p.precio_cop) });
+      hoja.addRow({ codigo: p.codigo || '', nombre: p.nombre, descripcion: p.descripcion || '', categoria: p.categoria || '', cantidad: p.cantidad, precio: Number(p.precio_cop) });
     }
 
     const ayuda = libro.addWorksheet('Instrucciones');
@@ -695,6 +768,8 @@ window.Exportar = (function () {
       `• Trae el inventario del ${fecha.split('-').reverse().join('/')}. Cada fila de la hoja "Productos" es un producto.`,
       '• El código es obligatorio y no se puede repetir. Si el código ya existe, se actualiza ese producto; si no existe, se crea.',
       '• Para un producto nuevo, el nombre y el precio son obligatorios.',
+      `• Categoría: escribe el nombre o la letra (${(opciones.categorias || []).map((x) => `${x.prefijo} ${x.nombre}`).join(', ')}).`,
+      '  Si la dejas vacía, se toma de la letra con la que empieza el código (L-2054 → Lavadora).',
       '• Una celda vacía deja ese dato como está.',
       '• Precio en pesos colombianos, sin decimales (ej: 150000).',
       '• Cantidad: número entero. Al importar eliges si es la existencia total (reemplaza) o unidades que llegan (se suman).',
@@ -711,7 +786,7 @@ window.Exportar = (function () {
     descargar(new Blob([datos], { type: 'application/vnd.openxmlformats-officedocument.spreadsheetml.sheet' }), `Plantilla-productos-${fecha}.xlsx`);
   }
 
-  const normalizar = (t) => String(t ?? '').normalize('NFD').replace(/[̀-ͯ]/g, '').toLowerCase().trim();
+  const normalizar = (t) => String(t ?? '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLowerCase().trim();
 
   // Reconoce los títulos aunque estén escritos distinto ("Cód.", "Existencia", "Precio COP"…).
   function columnaDe(titulo) {
@@ -719,6 +794,7 @@ window.Exportar = (function () {
     if (!t) return null;
     if (/^(codigo|cod\b|cod\.|ref)/.test(t)) return 'codigo';
     if (/^(nombre|producto)/.test(t)) return 'nombre';
+    if (/^(categoria|linea)/.test(t)) return 'categoria';
     if (/^(descripcion|detalle)/.test(t)) return 'descripcion';
     if (/^(cantidad|existencia|stock|unidades)/.test(t)) return 'cantidad';
     if (/^(precio|valor)/.test(t) && !/(usd|dolar)/.test(t)) return 'precio';
@@ -786,10 +862,11 @@ window.Exportar = (function () {
             codigo: textoDe(v('codigo'))?.toUpperCase() ?? null,
             nombre: textoDe(v('nombre')),
             descripcion: textoDe(v('descripcion')),
+            categoria: textoDe(v('categoria')),
           };
           const precio = numeroDe(v('precio'));
           const cantidad = numeroDe(v('cantidad'));
-          if (!datos.codigo && !datos.nombre && !datos.descripcion && precio == null && cantidad == null) continue;   // fila vacía
+          if (!datos.codigo && !datos.nombre && !datos.descripcion && !datos.categoria && precio == null && cantidad == null) continue;   // fila vacía
 
           if (Number.isNaN(precio) || precio < 0) datos.error = 'Precio inválido.';
           else if (Number.isNaN(cantidad) || (cantidad != null && (!Number.isInteger(cantidad) || cantidad < 0))) {
@@ -807,5 +884,114 @@ window.Exportar = (function () {
     throw new Error('No encontré las columnas. La primera fila debe tener los títulos: Código, Nombre, Descripción, Cantidad, Precio.');
   }
 
-  return { excel, pdf, pdfVenta, plantilla, leerProductos };
+  // ---------------- Reporte detallado: cada venta con sus productos ----------------
+  async function pdfDetallado(c) {
+    const doc = await nuevoPdf(`${tituloReporte(c)} (detallado)`, mayuscula(c.periodoTexto),
+      `Generado el ${fechaHora.format(c.generadoEn)} por ${c.generadoPor} · ${textoCierre(c)}`);
+    const w = escritor(doc, 120);
+    w.tabla({
+      head: [['Total vendido', 'Ventas', 'Unidades', 'Líneas anuladas']],
+      body: [[limpio(cop.format(c.totalCOP)) + (c.totalUSD != null ? limpio(` (aprox. ${usd.format(c.totalUSD)})`) : ''),
+        num.format(c.numVentas), num.format(c.unidades), num.format(c.numAnuladas)]],
+      headStyles: { ...estiloTabla.headStyles, fillColor: rgb(COLOR.grisClaro), textColor: rgb(COLOR.gris), fontStyle: 'normal', fontSize: 8 },
+      styles: { ...estiloTabla.styles, fontSize: 10, fontStyle: 'bold', halign: 'center' },
+    });
+
+    if (!c.ventas.length) {
+      w.nota('No hubo ventas en este periodo.');
+    } else {
+      // Una sola tabla: por cada venta, una fila de encabezado, sus productos y su total.
+      const porVenta = new Map();
+      for (const v of [...c.ventas].sort((a, b) => (a.ticket ?? 0) - (b.ticket ?? 0) || a.id - b.id)) {
+        if (!porVenta.has(v.ticket)) porVenta.set(v.ticket, []);
+        porVenta.get(v.ticket).push(v);
+      }
+      const cuerpo = [];
+      const anuladas = new Set();   // índices de filas anuladas (para pintarlas en gris)
+      for (const [, lineas] of porVenta) {
+        const p = lineas[0];
+        const nAnuladas = lineas.filter((l) => l.anulada_en).length;
+        const estadoVenta = nAnuladas === lineas.length ? ' · ANULADA' : nAnuladas ? ' · anulación parcial' : '';
+        cuerpo.push([{
+          content: limpio(`Venta #${p.numero_dia ?? p.ticket}  ·  consecutivo ${p.ticket}  ·  ${fechaHora.format(new Date(p.vendido_en))}  ·  ${p.vendedor || '-'}${estadoVenta}`),
+          colSpan: 6,
+          styles: { fillColor: rgb(COLOR.primarioClaro), fontStyle: 'bold', textColor: rgb(nAnuladas === lineas.length ? COLOR.rojo : COLOR.texto) },
+        }]);
+        for (const l of lineas) {
+          if (l.anulada_en) anuladas.add(cuerpo.length);
+          cuerpo.push([l.codigo || '-', l.anulada_en ? `${l.nombre}  (anulada)` : l.nombre, l.categoria || '-',
+            num.format(l.cantidad), limpio(cop.format(l.precio_unitario)), limpio(cop.format(l.total))]);
+        }
+        const total = lineas.filter((l) => !l.anulada_en).reduce((s, l) => s + Number(l.total), 0);
+        cuerpo.push([{ content: 'Total de la venta', colSpan: 5, styles: { halign: 'right', fontStyle: 'bold' } },
+          { content: limpio(cop.format(total)), styles: { halign: 'right', fontStyle: 'bold' } }]);
+      }
+      w.titulo('Ventas', 'Cada venta con sus productos. Las líneas anuladas aparecen en gris y no suman.');
+      w.tabla({
+        head: [['Código', 'Producto', 'Categoría', 'Cant.', 'Precio unit.', 'Subtotal']],
+        body: cuerpo,
+        foot: [[{ content: `TOTAL DEL PERIODO (${plural(c.numVentas, 'venta', 'ventas')})`, colSpan: 3 },
+          num.format(c.unidades), '', limpio(cop.format(c.totalCOP))]],
+        alternateRowStyles: {},
+        columnStyles: { 0: { cellWidth: 56 }, 2: { cellWidth: 72 }, 3: { cellWidth: 36 }, 4: { cellWidth: 72 }, 5: { cellWidth: 76 } },
+        didParseCell: (d) => {
+          if ([3, 4, 5].includes(d.column.index) && d.cell.colSpan === 1) d.cell.styles.halign = 'right';
+          if (d.section === 'body' && anuladas.has(d.row.index)) {
+            d.cell.styles.textColor = rgb(COLOR.gris);
+            d.cell.styles.fontStyle = 'italic';
+          }
+        },
+      });
+    }
+
+    if (c.porVendedor.length) {
+      w.titulo('Ventas por vendedor');
+      w.tabla({
+        head: [['Vendedor', 'Ventas', 'Unidades', 'Total']],
+        body: c.porVendedor.map((v) => [v.vendedor, num.format(v.ventas), num.format(v.unidades), limpio(cop.format(v.total))]),
+        columnStyles: { 1: { cellWidth: 55 }, 2: { cellWidth: 60 }, 3: { cellWidth: 90 } },
+        didParseCell: (d) => { if (d.column.index > 0) d.cell.styles.halign = 'right'; },
+      });
+    }
+
+    const pie = c.unDia ? c.desde.split('-').reverse().join('/') : `${c.desde.split('-').reverse().join('/')} a ${c.hasta.split('-').reverse().join('/')}`;
+    piePaginas(doc, `Sistema Mayor · ${tituloReporte(c)} detallado ${pie}`);
+    doc.save(nombreArchivo(c, 'pdf').replace('.pdf', '-detallado.pdf'));
+  }
+
+  // ---------------- Lista de precios (código, descripción y precio) ----------------
+  async function listaPrecios(productos, { tasa, generadoPor, mostrarTasa = false } = {}) {
+    const hoy = new Date();
+    const doc = await nuevoPdf('Lista de precios', mayuscula(new Intl.DateTimeFormat('es-CO', { timeZone: ZONA, dateStyle: 'full' }).format(hoy)),
+      `Generada el ${fechaHora.format(hoy)} por ${generadoPor || '-'} · ${plural(productos.length, 'producto', 'productos')}`);
+    const w = escritor(doc, 116);
+    const cuerpo = [];
+    let categoriaActual;
+    // Por categoría y, dentro de cada una, por código (así se buscan los productos).
+    const porCodigo = (a, b) => (a.codigo || '~').localeCompare(b.codigo || '~', 'es', { numeric: true }) || a.nombre.localeCompare(b.nombre);
+    for (const p of [...productos].sort((a, b) => (a.categoria || 'zzz').localeCompare(b.categoria || 'zzz') || porCodigo(a, b))) {
+      if (p.categoria !== categoriaActual) {
+        categoriaActual = p.categoria;
+        cuerpo.push([{ content: (categoriaActual || 'Sin categoría').toUpperCase(), colSpan: tasa ? 4 : 3,
+          styles: { fillColor: rgb(COLOR.primarioClaro), fontStyle: 'bold', textColor: rgb(COLOR.primario) } }]);
+      }
+      const descripcion = p.descripcion ? `${p.nombre} - ${p.descripcion}` : p.nombre;
+      cuerpo.push([p.codigo || '-', descripcion, limpio(cop.format(p.precio_cop)),
+        ...(tasa ? [limpio(usd.format(Number(p.precio_cop) / tasa))] : [])]);
+    }
+    w.tabla({
+      head: [['Código', 'Descripción', 'Precio (pesos)', ...(tasa ? ['Precio (dólares)'] : [])]],
+      body: cuerpo,
+      alternateRowStyles: {},
+      styles: { ...estiloTabla.styles, fontSize: 9 },
+      columnStyles: { 0: { cellWidth: 62 }, 2: { cellWidth: 88 }, 3: { cellWidth: 88 } },
+      didParseCell: (d) => { if (d.column.index >= 2 && d.cell.colSpan === 1) d.cell.styles.halign = 'right'; },
+    });
+    // Atención al público no ve la tasa del dólar: la nota solo sale para administración y el jefe.
+    if (tasa && mostrarTasa) w.nota(`Precios en dólares con la tasa de hoy: 1 USD = ${cop.format(tasa)}.`, false);
+    piePaginas(doc, `Sistema Mayor · Lista de precios ${new Intl.DateTimeFormat('es-CO', { timeZone: ZONA }).format(hoy)}`);
+    doc.save(`Lista-de-precios-${new Intl.DateTimeFormat('en-CA', { timeZone: ZONA }).format(hoy)}.pdf`);
+  }
+
+  return { excel, pdf, pdfDetallado, pdfVenta, listaPrecios, plantilla, leerProductos };
 })();

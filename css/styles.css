@@ -75,6 +75,8 @@ body {
 /* Lo que ven el administrador y el jefe; lo que solo ve el jefe */
 body:not([data-rol="admin"]):not([data-rol="jefe"]) .solo-admin { display: none !important; }
 body:not([data-rol="jefe"]) .solo-jefe { display: none !important; }
+/* Lo que solo ve atención al público */
+body:not([data-rol="atencion"]) .solo-atencion { display: none !important; }
 
 .sr-only {
   position: absolute; width: 1px; height: 1px; overflow: hidden;
@@ -138,6 +140,7 @@ input:focus, textarea:focus, select:focus {
 
 .alerta { margin: 0 0 14px; padding: 10px 12px; border-radius: var(--radio-sm); font-size: 14px; }
 .alerta-error { background: var(--peligro-suave); color: var(--peligro-texto-suave); }
+.alerta-aviso { background: var(--aviso-suave); color: var(--aviso-texto); font-weight: 500; }
 
 .ayuda { margin: 4px 0 16px; color: var(--texto-3); font-size: 14px; }
 
@@ -257,6 +260,8 @@ body[data-rol="atencion"] .panel-superior { grid-template-columns: 1fr; }   /* s
   min-height: 40px; margin-bottom: 12px;
 }
 .conteo { margin: 0; color: var(--texto-3); font-size: 14px; }
+.filtros-lista { display: flex; align-items: center; gap: 12px; min-width: 0; }
+.filtros-lista select { width: auto; max-width: 220px; height: 40px; padding: 0 10px; }
 
 /* ---------------- Tabla de productos ---------------- */
 
@@ -293,6 +298,11 @@ body[data-rol="atencion"] .panel-superior { grid-template-columns: 1fr; }   /* s
 
 .producto-nombre { font-weight: 600; }
 .producto-desc { margin-top: 2px; font-size: 13px; color: var(--texto-3); max-width: 52ch; }
+.producto-categoria {
+  display: inline-block; margin-top: 6px; padding: 1px 8px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; color: var(--primario); background: var(--primario-suave);
+}
+.producto-categoria.sin-categoria { color: var(--aviso-texto); background: var(--aviso-suave); }
 
 .precio { font-variant-numeric: tabular-nums; font-weight: 600; }
 .precio-usd { color: var(--texto-2); font-weight: 500; }
@@ -311,6 +321,9 @@ body[data-rol="atencion"] .panel-superior { grid-template-columns: 1fr; }   /* s
 .vacio { margin: 0; padding: 48px 16px; text-align: center; color: var(--texto-3); }
 
 .btn-vender { min-width: 76px; }
+/* Ya está todo lo disponible en el carrito: se puede tocar (explica por qué no suma más), pero se ve apagado */
+.btn-vender.btn-lleno { opacity: .6; }
+.btn-vender.btn-lleno:hover:not(:disabled) { opacity: .8; }
 
 /* Claves y códigos: se ven como puntos, pero no son campos de contraseña,
    así el navegador no ofrece guardarlos (la clave del jefe no debe quedar
@@ -578,6 +591,56 @@ body.con-carrito .toast { bottom: 104px; }
   .cambiando-tema, .cambiando-tema * { transition: none !important; }
 }
 
+/* ---------------- Categorías, precios en bloque y cierre ---------------- */
+
+.fila-categoria { display: grid; grid-template-columns: 90px 1fr; gap: 12px; }
+
+/* Estado del día en Reportes: abierto o cerrado (con texto, no solo color) */
+.estado-dia {
+  display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px 16px;
+  margin-bottom: 16px; padding: 10px 14px;
+  background: var(--superficie); border: 1px solid var(--borde); border-radius: var(--radio);
+}
+.estado-dia p { margin: 0; font-size: 14px; font-weight: 500; color: var(--texto-2); }
+.estado-dia.cerrado { background: var(--ok-suave); border-color: transparent; }
+.estado-dia.cerrado p { color: var(--ok-texto); }
+.estado-dia-acciones { display: flex; gap: 8px; }
+
+.cierre-totales { margin: 0 0 16px; padding: 0; list-style: none; border: 1px solid var(--borde); border-radius: var(--radio-sm); }
+.cierre-totales li { display: flex; justify-content: space-between; gap: 12px; padding: 8px 12px; border-bottom: 1px solid var(--borde); font-size: 14px; }
+.cierre-totales li:last-child { border-bottom: 0; }
+.cierre-totales span { color: var(--texto-3); }
+.cierre-totales strong { font-variant-numeric: tabular-nums; }
+.cierre-totales li.cierre-vendedor { background: var(--superficie-2); }
+
+.etiqueta-cierre {
+  padding: 1px 8px; border-radius: 999px;
+  font-size: 12px; font-weight: 600; color: var(--primario); background: var(--primario-suave);
+}
+
+/* ---------------- Administración: tickets del día (sin dinero) ---------------- */
+
+.lista-tickets { display: grid; grid-template-columns: repeat(auto-fill, minmax(360px, 1fr)); gap: 12px; margin: 0; padding: 0; list-style: none; }
+.ticket {
+  display: flex; flex-direction: column; gap: 10px;
+  padding: 14px 16px;
+  background: var(--superficie); border: 1px solid var(--borde); border-radius: var(--radio);
+  box-shadow: var(--sombra);
+}
+.ticket.anulado { box-shadow: none; background: var(--superficie-2); }
+.ticket.anulado .ticket-lineas { color: var(--texto-3); text-decoration: line-through; }
+.ticket-encabezado { display: flex; flex-wrap: wrap; align-items: baseline; gap: 4px 10px; font-size: 14px; color: var(--texto-2); }
+.ticket-numero { font-size: 22px; color: var(--texto); font-variant-numeric: tabular-nums; }
+.ticket-consecutivo { font-size: 12px; color: var(--texto-3); }
+.ticket-encabezado .etiqueta-anulada { margin-left: auto; }
+.ticket-lineas { margin: 0; padding: 0; list-style: none; font-size: 15px; }
+.ticket-lineas li { display: flex; align-items: center; gap: 8px; padding: 4px 0; }
+.ticket-lineas li + li { border-top: 1px dashed var(--borde); }
+.ticket-lineas li.anulada { color: var(--texto-3); text-decoration: line-through; }
+.ticket-cantidad { min-width: 34px; font-weight: 700; font-variant-numeric: tabular-nums; }
+.ticket-anular { align-self: flex-end; margin-top: auto; }
+body[data-rol="atencion"] .ticket-lineas .codigo { padding: 1px 7px; font-size: 13px; }
+
 /* ---------------- Aviso flotante ---------------- */
 
 .toast {
@@ -589,6 +652,7 @@ body.con-carrito .toast { bottom: 104px; }
   box-shadow: var(--sombra-alta);
 }
 .toast[data-tipo="error"] { background: var(--peligro); color: #fff; }
+.toast[data-tipo="aviso"] { background: var(--aviso-suave); color: var(--aviso-texto); border: 1px solid color-mix(in srgb, var(--aviso-texto) 35%, transparent); }
 
 /* ---------------- Vista ampliada: Atención al público ----------------
    Letra más grande y más ancho de pantalla, para leer de un vistazo
@@ -664,6 +728,14 @@ body[data-rol="atencion"] .btn-vender { height: 46px; min-width: 110px; padding:
   .carrito-lineas li { grid-template-columns: 1fr auto; }
   .carrito-subtotal { text-align: left; }
   .encabezado-lista { flex-wrap: wrap; }
+  .filtros-lista { flex: 1 1 100%; justify-content: space-between; }
+  .filtros-lista select { flex: 1; max-width: none; }
+  .acciones-lista { flex: 1 1 100%; }
+  .acciones-lista .btn { flex: 1 1 auto; }
+  .tabla td.col-producto .producto-categoria { margin-top: 6px; }
+  .estado-dia-acciones { width: 100%; }
+  .estado-dia-acciones .btn { flex: 1; }
+  .lista-tickets { grid-template-columns: 1fr; }
   body[data-rol="atencion"] .buscador input { min-height: 60px; font-size: 18px; }
 }
 

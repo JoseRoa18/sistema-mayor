@@ -10,16 +10,21 @@ Precios en **pesos colombianos (COP)** con su equivalente en **dólares (USD)** 
 | Buscar productos por código o nombre               | ✅            | ✅            | ✅                  |
 | Ver código, nombre, descripción, cantidad, precio COP y USD | ✅   | ✅            | ✅                  |
 | Vender con carrito (con el **código del vendedor**) | ✅            | ✅            | ✅                  |
+| Descargar la **lista de precios** en PDF           | ✅            | ✅            | ✅                  |
+| **Cerrar el día** (con el código de una persona autorizada) | ✅   | ✅            | ✅                  |
+| **Administración**: ver los tickets de hoy (sin dinero) y anular un ticket | ❌ | ❌ | Con la **clave del jefe** |
 | Crear y editar productos (código, nombre, descripción) | ✅      | ✅            | ❌                  |
-| Cambiar precios                                    | ✅            | Con la **clave del jefe** (si el jefe lo exige) | ❌ |
+| Cambiar precios (uno por uno o **en bloque**)      | ✅            | Con la **clave del jefe** (si el jefe lo exige) | ❌ |
 | Importar productos desde Excel                     | ✅            | Con la **clave del jefe** | ❌      |
 | Entradas y salidas de mercancía                    | ✅            | Con la **clave del jefe** | ❌      |
 | Anular ventas                                      | ✅            | Con la **clave del jefe** | ❌      |
 | Ver y cambiar la tasa del dólar                    | ✅            | ✅            | ❌                  |
 | Reportes (por día o por rango) y Excel/PDF         | ✅            | ✅            | ❌                  |
-| **Configuración**: vendedores, clave del jefe y si el precio pide clave | ✅            | ❌            | ❌                  |
+| **Reabrir** un día cerrado                         | ✅            | ❌            | ❌                  |
+| **Configuración**: personal (vendedores y quién cierra el día), categorías, clave del jefe y si el precio pide clave | ✅ | ❌ | ❌ |
 
-Atención al público ve el precio en dólares ya calculado, pero no la tasa usada.
+Atención al público ve el precio en dólares ya calculado, pero no la tasa usada (tampoco en
+la lista de precios en PDF).
 
 ### El jefe
 
@@ -28,6 +33,8 @@ El jefe entra con su propio usuario (`roa`) y tiene todos los permisos. En la pe
 
 - Crea vendedores y les asigna su **código** (mínimo 4 caracteres, no se repiten).
 - Cambia el código de un vendedor o lo desactiva (su código deja de servir).
+- Marca quién **puede hacer el cierre del día** (casilla "Puede hacer el cierre del día").
+- Agrega o cambia **categorías** (letra y nombre).
 - Define la **clave del jefe** (mínimo 6 caracteres): es la que teclea en el computador de la
   administradora para autorizar una entrada, una salida o la anulación de una venta.
   Con su propio usuario no se la pide.
@@ -50,8 +57,9 @@ css/styles.css        Estilos (tema claro y oscuro, adaptado a celular)
 js/config.js          URL y clave pública (anon) de Supabase
 js/app.js             Lógica de la aplicación
 js/tema.js            Tema claro / oscuro / automático
-js/exportar.js        Reportes en Excel y PDF, PDF de cada venta, plantilla e importación de Excel
-supabase/schema.sql   Tablas, permisos, búsqueda, ventas y clave del jefe
+js/exportar.js        Reportes en Excel y PDF (resumen y detallado), PDF de cada venta,
+                      lista de precios, plantilla e importación de Excel
+supabase/schema.sql   Tablas, permisos, búsqueda, ventas, cierres y clave del jefe
 ```
 
 No necesita instalación ni compilación: son archivos estáticos.
@@ -81,13 +89,31 @@ Busca por **código**, nombre o descripción, sin importar mayúsculas, tildes n
 - Es obligatorio al crear o editar un producto y no se puede repetir.
 - Se guarda en mayúsculas y sin espacios al inicio o al final (`abc-12` → `ABC-12`).
 
+### Categorías
+
+Todo producto tiene una categoría. Vienen cuatro, y la **letra con la que empieza el código**
+la elige sola:
+
+| Letra | Categoría      |
+|:-----:|----------------|
+| V     | Varios         |
+| L     | Lavadora       |
+| R     | Refrigeración  |
+| C     | Cocina         |
+
+Al escribir el código de un producto nuevo (`L-2054`) la categoría se pone sola (Lavadora);
+se puede cambiar a mano. En el inventario se filtra por categoría con la lista que está junto
+al conteo de productos. El jefe agrega o renombra categorías en **Configuración** (al renombrar,
+los productos de esa categoría se actualizan solos).
+
 La vista de **Atención al público** usa letra más grande y todo el ancho de la pantalla,
 para leer la información de un vistazo o mostrársela al cliente.
 
 ### Ventas con carrito
 
 El botón **Agregar** de cada producto lo pone en el carrito (cada clic suma una unidad, sin
-pasar de lo disponible). Abajo aparece la barra del carrito con el total; con **Ver carrito y
+pasar de lo disponible). Cuando ya están en el carrito todas las unidades disponibles, el botón
+se ve apagado y, si se toca, un aviso explica que no hay más unidades. Abajo aparece la barra del carrito con el total; con **Ver carrito y
 cobrar** se ajustan las cantidades, se quitan productos y el vendedor escribe **su código** una
 sola vez. Al confirmar, toda la venta queda registrada con **un mismo número (#)** a su nombre
 y se **descuenta del inventario automáticamente**.
@@ -96,8 +122,26 @@ La venta se registra completa o no se registra: si a un producto le faltan unida
 ejemplo, otro vendedor se llevó la última), no se vende nada y el carrito se ajusta a lo que
 hay. Nunca se vende más de lo disponible.
 
-Los números de venta son **consecutivos y sin saltos** (#1, #2, #3…): una venta que no se
-completa no gasta número.
+**Numeración:** cada día las ventas empiezan en **#1** (#1, #2, #3… del día). Además, cada venta
+tiene un **consecutivo** interno que nunca se reinicia ni salta números (una venta que no se
+completa no gasta número). Los tickets, reportes y PDF muestran los dos.
+
+### Cierre del día
+
+El cierre es **manual**: botón **Cerrar el día** en el inventario (o **Cerrar este día** en
+Reportes). Se escribe el **código** de una persona autorizada por el jefe para cerrar (en
+Configuración). Al cerrar se guarda una foto de los totales del día (total vendido, ventas,
+unidades, anulaciones, rango de consecutivos y ventas por vendedor) y quién cerró y a qué hora.
+
+Con el día cerrado **no se pueden registrar más ventas ni anular ventas de ese día**. Solo el
+jefe puede **reabrirlo** desde Reportes (queda registrado quién lo reabrió).
+
+### Administración (atención al público)
+
+Pestaña con los **tickets de hoy**: número del día, hora, vendedor y productos con su cantidad,
+**sin precios ni totales** y sin acceso al inventario. Un ticket completo se puede **anular**
+con la clave del jefe: las unidades vuelven al inventario. Solo se pueden anular tickets de
+hoy y mientras el día no esté cerrado.
 
 ### Entradas y salidas de mercancía
 
@@ -121,13 +165,20 @@ había antes y después.
   editando o por Excel. Se ve al editar el producto ("Historial de precio") y en Reportes.
 - El jefe decide en **Configuración** si cambiar un precio requiere su clave (viene activado).
   Si está activado, al administrador se le pide la clave del jefe solo cuando cambia el precio.
+- **Precios en bloque** (botón en el inventario): sube o baja los precios de una categoría o de
+  todos los productos, **por porcentaje** o **por un monto en pesos**, y redondea el resultado.
+  Primero se ve **cómo quedan** todos los precios y luego se aplica. No deja aplicar un cambio
+  que deje algún precio en $ 0 o menos. Cada cambio queda en el historial como "en bloque".
+- **Lista de precios** (botón en el inventario, para todos): PDF sencillo con código,
+  descripción y precio (pesos y dólares), agrupado por categoría. Sirve de respaldo por si el
+  sistema no está disponible.
 
 ### Importar productos desde Excel
 
 Botón **Importar Excel** en el inventario (administrador y jefe):
 
 1. **Descargar plantilla**: un Excel con todos los productos actuales (código, nombre,
-   descripción, cantidad, precio). Se corrige lo necesario o se agregan filas nuevas.
+   descripción, categoría, cantidad, precio). Se corrige lo necesario o se agregan filas nuevas.
 2. Se elige el archivo y qué significa la columna **Cantidad**: la **existencia total**
    (reemplaza lo que hay) o **unidades que llegan** (se suman).
 3. Antes de importar se ve fila por fila qué va a pasar: productos nuevos, cambios
@@ -135,7 +186,8 @@ Botón **Importar Excel** en el inventario (administrador y jefe):
 4. El administrador autoriza todo el archivo una sola vez con la clave del jefe.
 
 Reglas: los productos se buscan por código (si no existe, se crea con nombre y precio
-obligatorios); una celda vacía deja ese dato como está; si hay alguna fila con error no se
+obligatorios); la categoría se escribe con su nombre o su letra, y si se deja vacía se toma de
+la letra del código; una celda vacía deja ese dato como está; si hay alguna fila con error no se
 importa nada. Cada cambio de cantidad queda como entrada/salida y cada cambio de precio en
 el historial. Máximo 5.000 productos por archivo.
 
@@ -150,17 +202,23 @@ o un periodo **personalizado** (desde – hasta). Las semanas empiezan el lunes.
 - Ventas por día (cuando el periodo tiene varios días), productos más vendidos, ventas por
   vendedor, entradas y salidas, cambios de precio, **ventas por carrito**, detalle de cada línea
   vendida y productos con 5 unidades o menos (`STOCK_BAJO` en `js/config.js`).
-- **Reporte por carrito**: una fila por venta (número, fecha, vendedor, productos, unidades,
-  total y si fue anulada). Al tocar una venta, o al buscarla por su número con **Ver venta**,
+- **Estado del día**: si el día está cerrado, quién lo cerró y cuándo (en un periodo de varios
+  días, cuántos están cerrados).
+- **Reporte por carrito**: una fila por venta (número del día, consecutivo, fecha, vendedor,
+  productos, unidades, total y si fue anulada). Al tocar una venta, o al buscarla por su número con **Ver venta**,
   se abre su detalle completo con el total en pesos y en dólares (con la tasa de ese momento)
   y se puede **descargar en PDF**.
-- **Anular** una línea de venta equivocada (con la clave del jefe): las unidades vuelven al
-  inventario y queda marcada como anulada (no se borra).
-- **Descargar PDF**: un **resumen** de una página para un día normal (indicadores, entradas,
+- **Anular** una línea de venta equivocada, o la venta completa desde su detalle (con la clave
+  del jefe): las unidades vuelven al inventario y queda marcada como anulada (no se borra).
+  En un día cerrado no se ofrece anular.
+- **PDF detallado**: cada venta con sus productos, categoría, cantidad, precio y subtotal, y el
+  total de cada venta y del periodo.
+- **PDF resumen**: un **resumen** de una página para un día normal (indicadores, entradas,
   salidas, anulaciones y cambios de precio, ventas por vendedor y por día, los 10 productos más
   vendidos y los 10 por agotarse).
-- **Descargar Excel**: todo el detalle (Resumen, Ventas, Por carrito, Por día, Por producto,
-  Por vendedor, Entradas y salidas, Cambios de precio, Por agotarse e Inventario).
+- **Excel detallado**: todo el detalle (Resumen con el estado del cierre, Ventas línea por
+  línea, **Ventas detalladas** agrupadas por venta, Por carrito, Por día, Por producto, Por
+  vendedor, Entradas y salidas, Cambios de precio, Por agotarse e Inventario con categoría).
 
 Mientras el periodo incluya el día de hoy, los datos se actualizan solos cada minuto.
 
@@ -222,13 +280,15 @@ Se puede ejecutar en *SQL Editor* en un proyecto nuevo, y es seguro volver a eje
 | Tabla           | Contenido                                                        |
 |-----------------|------------------------------------------------------------------|
 | `perfiles`      | Rol de cada usuario (`jefe` / `admin` / `atencion`)              |
-| `productos`     | Código (único), nombre, descripción, cantidad y precio en COP    |
+| `productos`     | Código (único), nombre, descripción, categoría, cantidad y precio en COP |
+| `categorias`    | Letra (prefijo del código) y nombre de cada categoría           |
 | `configuracion` | Tasa del dólar (pesos por 1 USD), cuándo y quién la cambió       |
-| `ventas`        | Cada línea vendida: n.º de venta, producto, cantidad, precio, tasa, vendedor, hora y si fue anulada |
-| `numeracion`    | Último número de venta usado (para que sean consecutivos y sin saltos) |
+| `ventas`        | Cada línea vendida: consecutivo, n.º del día, producto, categoría, cantidad, precio, tasa, vendedor, hora y si fue anulada |
+| `numeracion`    | Último consecutivo usado y último número del día (consecutivos y sin saltos) |
+| `cierres`       | Cierre de cada día: quién cerró, cuándo, totales en ese momento y si el jefe lo reabrió |
 | `historial_precios` | Cada cambio de precio: antes, después, quién, cuándo y si fue por Excel |
 | `movimientos`   | Historial de todo lo que mueve el inventario (ventas, anulaciones, entradas, salidas) |
-| `vendedores`    | Nombre y código cifrado de cada vendedor (nadie lo puede leer)   |
+| `vendedores`    | Nombre, código cifrado (nadie lo puede leer) y si puede cerrar el día |
 | `seguridad`     | Clave del jefe cifrada e intentos fallidos (nadie la puede leer) |
 
 ## Seguridad

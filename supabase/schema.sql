@@ -56,6 +56,39 @@ alter table public.productos add column if not exists codigo text;
 -- El código no se puede repetir (los productos sin código no cuentan).
 create unique index if not exists productos_codigo_unico on public.productos (codigo);
 
+-- Categorías: lista fija, cada una con la letra con la que empiezan sus códigos
+-- (V-3013 → Varios). El jefe puede agregar más en Configuración.
+create table if not exists public.categorias (
+  prefijo text primary key check (prefijo ~ '^[A-Z]{1,5}$'),
+  nombre  text not null unique check (char_length(trim(nombre)) > 0)
+);
+insert into public.categorias (prefijo, nombre) values
+  ('V', 'Varios'), ('L', 'Lavadora'), ('R', 'Refrigeración'), ('C', 'Cocina')
+on conflict (prefijo) do nothing;
+
+-- Categoría del producto: obligatoria al crear, editar o importar (los que ya
+-- existían sin categoría la reciben la próxima vez que se editen).
+alter table public.productos add column if not exists categoria text;
+alter table public.productos drop constraint if exists productos_categoria_fkey;
+alter table public.productos add constraint productos_categoria_fkey
+  foreign key (categoria) references public.categorias (nombre) on update cascade;
+create index if not exists productos_categoria on public.productos (categoria);
+
+-- Letra con la que empieza un código: "V-3013" y "V3013" → "V".
+create or replace function public.prefijo_codigo(p_codigo text)
+returns text
+language sql
+immutable
+set search_path = ''
+as $$
+  select substring(upper(coalesce(p_codigo, '')) from '^([A-Z]+)')
+$$;
+
+-- Los productos que aún no tienen categoría la toman de la letra de su código.
+update public.productos p set categoria = c.nombre
+from public.categorias c
+where p.categoria is null and c.prefijo = public.prefijo_codigo(p.codigo);
+
 -- Una sola fila (id = 1). tasa_usd = cuántos pesos colombianos vale 1 USD.
 create table if not exists public.configuracion (
   id              smallint primary key default 1 check (id = 1),
@@ -114,7 +147,21 @@ create table if not exists public.vendedores (
   actualizado_en timestamptz not null default now()
 );
 
+-- ¿Esta persona puede hacer el cierre del día con su código? (lo decide el jefe)
+alter table public.vendedores add column if not exists puede_cerrar boolean not null default false;
+
 alter table public.ventas add column if not exists vendedor_id bigint references public.vendedores (id) on delete set null;
+
+-- Día del negocio: la fecha en la zona horaria del sistema (Caracas, UTC-4).
+-- Debe coincidir con ZONA_HORARIA de js/config.js.
+create or replace function public.dia_negocio(p_momento timestamptz)
+returns date
+language sql
+stable
+set search_path = ''
+as $$
+  select (p_momento at time zone 'America/Caracas')::date
+$$;
 
 -- Número de venta: agrupa los productos que se cobraron juntos (carrito).
 -- Los números son consecutivos y sin saltos (1, 2, 3…): salen de un contador
@@ -153,6 +200,55 @@ $$;
 alter table public.ventas alter column ticket set not null;
 drop sequence if exists public.ventas_ticket_seq;   -- versión anterior (dejaba saltos)
 
+-- Número del día: cada día las ventas empiezan en #1. El consecutivo interno
+-- (ticket) sigue sin reiniciarse nunca.
+alter table public.ventas add column if not exists numero_dia integer;
+alter table public.ventas add column if not exists categoria text;   -- copia de la categoría al vender
+-- Ventas anteriores a las categorías: toman la categoría actual de su producto.
+update public.ventas v set categoria = p.categoria
+from public.productos p
+where p.id = v.producto_id and v.categoria is null and p.categoria is not null;
+alter table public.numeracion add column if not exists fecha_dia date;
+alter table public.numeracion add column if not exists ultima_del_dia integer not null default 0;
+
+-- Una sola vez: numerar por día las ventas que ya existían.
+do $$
+begin
+  if exists (select 1 from public.ventas where numero_dia is null) then
+    with ventas_dia as (
+      select ticket, public.dia_negocio(min(vendido_en)) as dia from public.ventas group by ticket
+    ), numerados as (
+      select ticket, dia, row_number() over (partition by dia order by ticket) as numero from ventas_dia
+    )
+    update public.ventas v set numero_dia = n.numero
+    from numerados n
+    where n.ticket = v.ticket and v.numero_dia is null;
+
+    update public.numeracion set
+      fecha_dia = (select public.dia_negocio(max(vendido_en)) from public.ventas),
+      ultima_del_dia = (select coalesce(max(numero_dia), 0) from public.ventas
+                        where public.dia_negocio(vendido_en) = (select public.dia_negocio(max(vendido_en)) from public.ventas))
+    where id = 1 and fecha_dia is null;
+  end if;
+end
+$$;
+
+-- Cierres del día: manuales, con el código de una persona autorizada.
+-- Un día está cerrado si tiene un cierre sin reabrir.
+create table if not exists public.cierres (
+  id            bigint generated always as identity primary key,
+  fecha         date not null,
+  cerrado_por   text not null,
+  cerrado_en    timestamptz not null default now(),
+  usuario       text not null default '',   -- cuenta con la que se cerró
+  totales       jsonb not null,             -- foto de los totales al momento del cierre
+  reabierto_por text,
+  reabierto_en  timestamptz
+);
+
+create index if not exists cierres_fecha on public.cierres (fecha);
+create unique index if not exists cierres_un_abierto_por_dia on public.cierres (fecha) where reabierto_en is null;
+
 -- Historial de todo lo que mueve el inventario: ventas, anulaciones,
 -- entradas y salidas autorizadas con la clave del jefe.
 create table if not exists public.movimientos (
@@ -186,6 +282,11 @@ create table if not exists public.historial_precios (
   usuario         text not null default '',
   creado_en       timestamptz not null default now()
 );
+
+-- 'masivo' = subida o bajada de precios en bloque.
+alter table public.historial_precios drop constraint if exists historial_precios_origen_check;
+alter table public.historial_precios add constraint historial_precios_origen_check
+  check (origen in ('creacion', 'edicion', 'importacion', 'masivo'));
 
 create index if not exists historial_precios_creado_en on public.historial_precios (creado_en);
 create index if not exists historial_precios_producto on public.historial_precios (producto_id, creado_en desc);
@@ -244,13 +345,14 @@ create trigger configuracion_actualizada
   before update on public.configuracion
   for each row execute function public.tocar_configuracion();
 
--- Búsqueda por código, nombre o descripción, sin importar mayúsculas, tildes
--- ni guiones ("cafe" encuentra "Café"; "v3013" encuentra "V-3013" y al revés).
--- Cada palabra escrita debe aparecer.
+-- Búsqueda por código, nombre, descripción o categoría, sin importar mayúsculas,
+-- tildes ni guiones ("cafe" encuentra "Café"; "v3013" encuentra "V-3013" y al revés).
+-- Cada palabra escrita debe aparecer. p_categoria (opcional) filtra por categoría.
 -- Primero salen los productos cuyo código es exactamente el buscado,
 -- luego los que empiezan por él, y después el resto por nombre.
 -- Corre con los permisos de quien llama, así que respeta RLS.
-create or replace function public.buscar_productos(q text default '')
+drop function if exists public.buscar_productos(text);
+create or replace function public.buscar_productos(q text default '', p_categoria text default null)
 returns setof public.productos
 language sql
 stable
@@ -262,18 +364,63 @@ as $$
   )
   select p.*
   from public.productos p, buscado b
-  where not exists (
-    select 1
-    from unnest(regexp_split_to_array(unaccent(lower(coalesce(q, ''))), '\s+')) as palabra
-    where translate(palabra, '-–—', '') <> ''
-      and strpos(translate(unaccent(lower(coalesce(p.codigo, '') || ' ' || p.nombre || ' ' || p.descripcion)), '-–—', ''),
-                 translate(palabra, '-–—', '')) = 0
-  )
+  where (nullif(trim(coalesce(p_categoria, '')), '') is null or p.categoria = p_categoria)
+    and not exists (
+      select 1
+      from unnest(regexp_split_to_array(unaccent(lower(coalesce(q, ''))), '\s+')) as palabra
+      where translate(palabra, '-–—', '') <> ''
+        and strpos(translate(unaccent(lower(coalesce(p.codigo, '') || ' ' || p.nombre || ' ' || p.descripcion || ' ' || coalesce(p.categoria, ''))), '-–—', ''),
+                   translate(palabra, '-–—', '')) = 0
+    )
   order by
     coalesce(translate(p.codigo, '-–—', '') = b.codigo, false) desc,
     coalesce(b.codigo <> '' and starts_with(translate(p.codigo, '-–—', ''), b.codigo), false) desc,
     p.nombre
   limit 300
+$$;
+
+drop function if exists public.normalizar_categoria(text);   -- versión anterior (categorías libres)
+
+-- Categoría válida a partir de lo escrito (el nombre, sin importar mayúsculas
+-- ni tildes, o la letra: "l" → Lavadora). Si no se escribió nada, se deduce de
+-- la letra del código. Devuelve null si no corresponde a ninguna categoría.
+create or replace function public.categoria_valida(p_texto text, p_codigo text)
+returns text
+language sql
+stable
+security definer
+set search_path = public, extensions
+as $$
+  with escrito as (select nullif(trim(coalesce(p_texto, '')), '') as t)
+  select case
+    when (select t from escrito) is not null then (
+      select c.nombre from public.categorias c, escrito e
+      where unaccent(lower(c.nombre)) = unaccent(lower(e.t)) or c.prefijo = upper(e.t)
+      limit 1)
+    else (select c.nombre from public.categorias c where c.prefijo = public.prefijo_codigo(p_codigo))
+  end
+$$;
+
+-- Lista de categorías (para el formulario, el filtro y los reportes).
+drop function if exists public.lista_categorias();
+create or replace function public.lista_categorias()
+returns table (prefijo text, nombre text)
+language sql
+stable
+security definer
+set search_path = ''
+as $$
+  select prefijo, nombre from public.categorias order by nombre
+$$;
+
+-- Texto con las categorías, para los mensajes de error: "C Cocina, L Lavadora…".
+create or replace function public.texto_categorias()
+returns text
+language sql
+stable
+set search_path = ''
+as $$
+  select string_agg(prefijo || ' ' || nombre, ', ' order by nombre) from public.categorias
 $$;
 
 -- Cuenta con sesión ("admin", "publico"), para el historial.
@@ -403,12 +550,21 @@ declare
   v_producto public.productos;
   v_venta    public.ventas;
   v_ticket   bigint;
+  v_dia      integer;
+  v_cierre   public.cierres;
   v_tasa     numeric;
   v_lineas   jsonb := '[]'::jsonb;
   v_total    numeric := 0;
 begin
   if public.rol_actual() is null then
     raise exception 'No tienes permiso para registrar ventas.' using errcode = '42501';
+  end if;
+  -- Con el día ya cerrado no se vende (el jefe puede reabrirlo).
+  select * into v_cierre from public.cierres where fecha = public.dia_negocio(now()) and reabierto_en is null;
+  if found then
+    return jsonb_build_object('ok', false, 'motivo', 'dia_cerrado',
+      'error', format('El día de hoy ya se cerró (lo cerró %s a las %s). Para seguir vendiendo, el jefe debe reabrirlo.',
+                      v_cierre.cerrado_por, replace(replace(to_char(v_cierre.cerrado_en at time zone 'America/Caracas', 'FMHH12:MI AM'), 'AM', 'a. m.'), 'PM', 'p. m.')));
   end if;
   if p_items is null or jsonb_typeof(p_items) <> 'array' or jsonb_array_length(p_items) = 0 then
     return jsonb_build_object('ok', false, 'error', 'El carrito está vacío.');
@@ -440,8 +596,14 @@ begin
     end if;
   end loop;
 
-  -- 2) Registrar cada línea con el mismo número de venta.
-  update public.numeracion set ultima_venta = ultima_venta + 1 where id = 1 returning ultima_venta into v_ticket;
+  -- 2) Registrar cada línea con el mismo número de venta: el consecutivo interno
+  --    (nunca se reinicia) y el número del día (empieza en 1 cada día).
+  update public.numeracion set
+    ultima_venta = ultima_venta + 1,
+    ultima_del_dia = case when fecha_dia = public.dia_negocio(now()) then ultima_del_dia + 1 else 1 end,
+    fecha_dia = public.dia_negocio(now())
+  where id = 1
+  returning ultima_venta, ultima_del_dia into v_ticket, v_dia;
   v_tasa := (select tasa_usd from public.configuracion where id = 1);
   for v_item in
     select producto_id, sum(cantidad)::integer as cantidad
@@ -452,9 +614,9 @@ begin
     update public.productos set cantidad = cantidad - v_item.cantidad where id = v_producto.id;
 
     insert into public.ventas
-      (ticket, producto_id, codigo, nombre, cantidad, precio_unitario, total, tasa_usd, vendedor, vendedor_id, vendido_por)
+      (ticket, numero_dia, producto_id, codigo, nombre, categoria, cantidad, precio_unitario, total, tasa_usd, vendedor, vendedor_id, vendido_por)
     values (
-      v_ticket, v_producto.id, v_producto.codigo, v_producto.nombre, v_item.cantidad, v_producto.precio_cop,
+      v_ticket, v_dia, v_producto.id, v_producto.codigo, v_producto.nombre, v_producto.categoria, v_item.cantidad, v_producto.precio_cop,
       v_producto.precio_cop * v_item.cantidad, v_tasa,
       v_vendedor ->> 'nombre', (v_vendedor ->> 'id')::bigint, auth.uid()
     )
@@ -471,7 +633,7 @@ begin
     v_total := v_total + v_venta.total;
   end loop;
 
-  return jsonb_build_object('ok', true, 'ticket', v_ticket, 'vendedor', v_vendedor ->> 'nombre',
+  return jsonb_build_object('ok', true, 'ticket', v_ticket, 'numero_dia', v_dia, 'vendedor', v_vendedor ->> 'nombre',
                             'total', v_total, 'lineas', v_lineas);
 end
 $$;
@@ -525,6 +687,10 @@ begin
   end if;
   if v_venta.anulada_en is not null then
     return jsonb_build_object('ok', false, 'error', 'Esta venta ya estaba anulada.');
+  end if;
+  if exists (select 1 from public.cierres where fecha = public.dia_negocio(v_venta.vendido_en) and reabierto_en is null) then
+    return jsonb_build_object('ok', false, 'motivo', 'dia_cerrado',
+      'error', 'Esa venta es de un día que ya se cerró. Para anularla, el jefe debe reabrir ese día.');
   end if;
 
   select cantidad into v_stock from public.productos where id = v_venta.producto_id for update;
@@ -637,8 +803,9 @@ create trigger productos_historial_precio
 -- Crea (p_id null) o edita un producto. La cantidad no se toca aquí.
 -- Si cambia el precio y la configuración lo exige, el administrador necesita
 -- la clave del jefe (el jefe no).
+drop function if exists public.guardar_producto(bigint, text, text, text, numeric, text);
 create or replace function public.guardar_producto(
-  p_id bigint, p_codigo text, p_nombre text, p_descripcion text, p_precio numeric, p_clave_jefe text)
+  p_id bigint, p_codigo text, p_nombre text, p_descripcion text, p_categoria text, p_precio numeric, p_clave_jefe text)
 returns jsonb
 language plpgsql
 security definer
@@ -646,6 +813,7 @@ set search_path = ''
 as $$
 declare
   v_codigo text := upper(trim(coalesce(p_codigo, '')));
+  v_categoria text := public.categoria_valida(p_categoria, p_codigo);
   v_actual public.productos;
   v_prod   public.productos;
   v_error  text;
@@ -658,6 +826,10 @@ begin
   end if;
   if trim(coalesce(p_nombre, '')) = '' then
     return jsonb_build_object('ok', false, 'error', 'El nombre es obligatorio.', 'campo', 'nombre');
+  end if;
+  if v_categoria is null then
+    return jsonb_build_object('ok', false, 'campo', 'categoria',
+      'error', format('Elige una categoría válida: %s.', public.texto_categorias()));
   end if;
   if p_precio is null or p_precio < 0 then
     return jsonb_build_object('ok', false, 'error', 'Escribe un precio válido en pesos.', 'campo', 'precio');
@@ -679,12 +851,13 @@ begin
 
   begin
     if p_id is null then
-      insert into public.productos (codigo, nombre, descripcion, precio_cop)
-      values (v_codigo, trim(p_nombre), trim(coalesce(p_descripcion, '')), p_precio)
+      insert into public.productos (codigo, nombre, descripcion, categoria, precio_cop)
+      values (v_codigo, trim(p_nombre), trim(coalesce(p_descripcion, '')), v_categoria, p_precio)
       returning * into v_prod;
     else
       update public.productos
-      set codigo = v_codigo, nombre = trim(p_nombre), descripcion = trim(coalesce(p_descripcion, '')), precio_cop = p_precio
+      set codigo = v_codigo, nombre = trim(p_nombre), descripcion = trim(coalesce(p_descripcion, '')),
+          categoria = v_categoria, precio_cop = p_precio
       where id = p_id
       returning * into v_prod;
     end if;
@@ -697,7 +870,7 @@ end
 $$;
 
 -- Importa productos desde Excel en un solo paso (todo o nada).
--- p_filas = [{"fila", "codigo", "nombre", "descripcion", "cantidad", "precio"}, ...]
+-- p_filas = [{"fila", "codigo", "nombre", "descripcion", "categoria", "cantidad", "precio"}, ...]
 -- Por código: si no existe se crea; si existe se actualiza. Una celda vacía
 -- conserva el valor actual. p_modo: 'reemplazar' = la cantidad del archivo es la
 -- existencia total; 'sumar' = son unidades que llegan. Cada cambio de cantidad
@@ -715,6 +888,7 @@ declare
   v_fila       record;
   v_prod       public.productos;
   v_nuevo      integer;
+  v_categoria  text;
   v_creados    integer := 0;
   v_cambiados  integer := 0;
   v_iguales    integer := 0;
@@ -743,11 +917,16 @@ begin
         when count(*) over (partition by upper(trim(x.codigo))) > 1 then 'Código repetido en el archivo.'
         when x.precio < 0 then 'Precio inválido.'
         when x.cantidad < 0 then 'Cantidad inválida.'
+        when trim(coalesce(x.categoria, '')) <> '' and public.categoria_valida(x.categoria, null) is null
+          then format('Categoría desconocida: "%s". Usa: %s.', trim(x.categoria), public.texto_categorias())
         when not exists (select 1 from public.productos p where p.codigo = upper(trim(x.codigo)))
              and (trim(coalesce(x.nombre, '')) = '' or x.precio is null)
           then 'Producto nuevo: faltan el nombre o el precio.'
+        when public.categoria_valida(x.categoria, x.codigo) is null
+             and not exists (select 1 from public.productos p where p.codigo = upper(trim(x.codigo)) and p.categoria is not null)
+          then 'Falta la categoría: escríbela, o usa un código que empiece con la letra de una categoría.'
       end as error
-    from jsonb_to_recordset(p_filas) as x(fila integer, codigo text, nombre text, descripcion text, cantidad integer, precio numeric)
+    from jsonb_to_recordset(p_filas) as x(fila integer, codigo text, nombre text, descripcion text, categoria text, cantidad integer, precio numeric)
   ) t
   where error is not null;
 
@@ -765,19 +944,24 @@ begin
 
   for v_fila in
     select upper(trim(x.codigo)) as codigo, nullif(trim(x.nombre), '') as nombre,
-           nullif(trim(x.descripcion), '') as descripcion, x.cantidad, x.precio
-    from jsonb_to_recordset(p_filas) as x(fila integer, codigo text, nombre text, descripcion text, cantidad integer, precio numeric)
+           nullif(trim(x.descripcion), '') as descripcion, x.categoria, x.cantidad, x.precio
+    from jsonb_to_recordset(p_filas) as x(fila integer, codigo text, nombre text, descripcion text, categoria text, cantidad integer, precio numeric)
     order by 1
   loop
     select * into v_prod from public.productos where codigo = v_fila.codigo for update;
 
     if not found then
-      insert into public.productos (codigo, nombre, descripcion, precio_cop)
-      values (v_fila.codigo, v_fila.nombre, coalesce(v_fila.descripcion, ''), v_fila.precio)
+      insert into public.productos (codigo, nombre, descripcion, categoria, precio_cop)
+      values (v_fila.codigo, v_fila.nombre, coalesce(v_fila.descripcion, ''), public.categoria_valida(v_fila.categoria, v_fila.codigo), v_fila.precio)
       returning * into v_prod;
       v_creados := v_creados + 1;
       v_nuevo := coalesce(v_fila.cantidad, 0);
     else
+      -- Categoría: la escrita; si no hay y el producto no tenía, la de la letra del código.
+      v_categoria := case
+        when nullif(trim(coalesce(v_fila.categoria, '')), '') is not null then public.categoria_valida(v_fila.categoria, null)
+        when v_prod.categoria is null then public.categoria_valida(null, v_fila.codigo)
+      end;
       v_nuevo := case
         when v_fila.cantidad is null then v_prod.cantidad
         when p_modo = 'sumar' then v_prod.cantidad + v_fila.cantidad
@@ -786,6 +970,7 @@ begin
       if (v_fila.nombre is not null and v_fila.nombre is distinct from v_prod.nombre)
          or (v_fila.descripcion is not null and v_fila.descripcion is distinct from v_prod.descripcion)
          or (v_fila.precio is not null and v_fila.precio is distinct from v_prod.precio_cop)
+         or (v_categoria is not null and v_categoria is distinct from v_prod.categoria)
          or v_nuevo <> v_prod.cantidad then
         v_cambiados := v_cambiados + 1;
       else
@@ -794,6 +979,7 @@ begin
       update public.productos
       set nombre = coalesce(v_fila.nombre, nombre),
           descripcion = coalesce(v_fila.descripcion, descripcion),
+          categoria = coalesce(v_categoria, categoria),
           precio_cop = coalesce(v_fila.precio, precio_cop)
       where id = v_prod.id;
     end if;
@@ -819,6 +1005,303 @@ end
 $$;
 
 -- ---------------------------------------------------------------------
+-- Precios en bloque
+-- ---------------------------------------------------------------------
+
+-- Precio después de subir o bajar por porcentaje o por monto, redondeado al
+-- múltiplo indicado (1 = sin redondeo; 100 = a la centena más cercana).
+create or replace function public.precio_ajustado(
+  p_precio numeric, p_operacion text, p_tipo text, p_valor numeric, p_redondeo integer)
+returns numeric
+language sql
+immutable
+set search_path = ''
+as $$
+  select round(
+    (case when p_tipo = 'porcentaje'
+          then p_precio * (1 + (case when p_operacion = 'subir' then 1 else -1 end) * p_valor / 100)
+          else p_precio + (case when p_operacion = 'subir' then 1 else -1 end) * p_valor end)
+    / greatest(coalesce(p_redondeo, 1), 1)
+  ) * greatest(coalesce(p_redondeo, 1), 1)
+$$;
+
+-- Sube o baja precios en bloque: una categoría (o todos si p_categoria es null).
+-- Solo toca productos con precio mayor que 0. Con p_simular = true no cambia
+-- nada: devuelve cómo quedaría cada precio (la vista previa).
+-- Sigue la misma regla que un cambio individual: si la configuración lo exige,
+-- el administrador necesita la clave del jefe. Todo queda en el historial.
+create or replace function public.cambiar_precios_masivo(
+  p_categoria text, p_operacion text, p_tipo text, p_valor numeric, p_redondeo integer,
+  p_simular boolean, p_clave_jefe text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_categoria text := nullif(trim(coalesce(p_categoria, '')), '');
+  v_filas     jsonb;
+  v_total     integer;
+  v_cambian   integer;
+  v_en_cero   integer;
+  v_error     text;
+begin
+  if coalesce(public.rol_actual(), '') not in ('admin', 'jefe') then
+    raise exception 'Solo el administrador o el jefe cambian precios.' using errcode = '42501';
+  end if;
+  if p_operacion is null or p_operacion not in ('subir', 'bajar') or p_tipo is null or p_tipo not in ('porcentaje', 'monto') then
+    return jsonb_build_object('ok', false, 'error', 'Elige si se sube o se baja, y si es por porcentaje o por monto.');
+  end if;
+  if p_valor is null or p_valor <= 0 then
+    return jsonb_build_object('ok', false, 'error', 'Escribe un valor mayor que cero.', 'campo', 'valor');
+  end if;
+  if p_tipo = 'porcentaje' and p_operacion = 'bajar' and p_valor >= 100 then
+    return jsonb_build_object('ok', false, 'error', 'No se puede bajar 100 % o más.', 'campo', 'valor');
+  end if;
+
+  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'codigo', codigo, 'nombre', nombre, 'categoria', categoria,
+                                               'antes', precio_cop, 'despues', nuevo) order by nombre), '[]'::jsonb),
+         count(*), count(*) filter (where nuevo <> precio_cop), count(*) filter (where nuevo <= 0)
+  into v_filas, v_total, v_cambian, v_en_cero
+  from (
+    select id, codigo, nombre, categoria, precio_cop,
+           public.precio_ajustado(precio_cop, p_operacion, p_tipo, p_valor, p_redondeo) as nuevo
+    from public.productos
+    where precio_cop > 0 and (v_categoria is null or categoria = v_categoria)
+  ) t;
+
+  if v_total = 0 then
+    return jsonb_build_object('ok', false, 'error', 'No hay productos con precio en esa selección.');
+  end if;
+  if v_en_cero > 0 then
+    return jsonb_build_object('ok', false, 'campo', 'valor', 'filas', v_filas,
+      'error', format('%s producto(s) quedarían en $0 o menos. Usa un valor menor.', v_en_cero));
+  end if;
+  if p_simular then
+    return jsonb_build_object('ok', true, 'simulado', true, 'productos', v_total, 'cambian', v_cambian, 'filas', v_filas);
+  end if;
+
+  if (select precio_requiere_clave from public.configuracion where id = 1) then
+    v_error := public.autorizar_con_clave_jefe(p_clave_jefe);
+    if v_error is not null then
+      return jsonb_build_object('ok', false, 'error', v_error, 'campo', 'clave');
+    end if;
+  end if;
+
+  perform set_config('app.origen', 'masivo', true);
+  update public.productos
+  set precio_cop = public.precio_ajustado(precio_cop, p_operacion, p_tipo, p_valor, p_redondeo)
+  where precio_cop > 0 and (v_categoria is null or categoria = v_categoria)
+    and public.precio_ajustado(precio_cop, p_operacion, p_tipo, p_valor, p_redondeo) <> precio_cop;
+  get diagnostics v_cambian = row_count;
+
+  return jsonb_build_object('ok', true, 'productos', v_total, 'cambiados', v_cambian);
+end
+$$;
+
+-- ---------------------------------------------------------------------
+-- Cierre del día (manual, con el código de una persona autorizada)
+-- ---------------------------------------------------------------------
+
+-- ¿Está cerrado el día? Lo puede consultar cualquier usuario con sesión.
+create or replace function public.estado_dia(p_fecha date default null)
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+declare
+  v_fecha  date := coalesce(p_fecha, public.dia_negocio(now()));
+  v_cierre public.cierres;
+begin
+  if public.rol_actual() is null then
+    raise exception 'No tienes permiso.' using errcode = '42501';
+  end if;
+  select * into v_cierre from public.cierres where fecha = v_fecha and reabierto_en is null;
+  return jsonb_build_object(
+    'fecha', v_fecha,
+    'hoy', public.dia_negocio(now()),
+    'cerrado', found,
+    'cerrado_por', v_cierre.cerrado_por,
+    'cerrado_en', v_cierre.cerrado_en
+  );
+end
+$$;
+
+create or replace function public.cerrar_dia(p_fecha date, p_codigo text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_fecha   date := coalesce(p_fecha, public.dia_negocio(now()));
+  v_persona jsonb;
+  v_totales jsonb;
+  v_cierre  public.cierres;
+begin
+  if public.rol_actual() is null then
+    raise exception 'No tienes permiso.' using errcode = '42501';
+  end if;
+  if v_fecha > public.dia_negocio(now()) then
+    return jsonb_build_object('ok', false, 'error', 'No se puede cerrar un día que todavía no ha llegado.');
+  end if;
+  if exists (select 1 from public.cierres where fecha = v_fecha and reabierto_en is null) then
+    return jsonb_build_object('ok', false, 'error', 'Ese día ya está cerrado.');
+  end if;
+
+  v_persona := public.identificar_vendedor(p_codigo);
+  if v_persona ? 'error' then
+    return jsonb_build_object('ok', false, 'error', v_persona ->> 'error', 'campo', 'codigo');
+  end if;
+  if not (select puede_cerrar from public.vendedores where id = (v_persona ->> 'id')::bigint) then
+    return jsonb_build_object('ok', false, 'campo', 'codigo',
+      'error', format('%s no tiene permiso para hacer el cierre. El jefe lo puede autorizar en Configuración.', v_persona ->> 'nombre'));
+  end if;
+
+  -- Foto de los totales del día en el momento del cierre.
+  select jsonb_build_object(
+    'total',        coalesce(sum(total) filter (where anulada_en is null), 0),
+    'total_usd',    round(coalesce(sum(total / tasa_usd) filter (where anulada_en is null and tasa_usd > 0), 0), 2),
+    'ventas',       count(distinct ticket) filter (where anulada_en is null),
+    'unidades',     coalesce(sum(cantidad) filter (where anulada_en is null), 0),
+    'lineas_anuladas', count(*) filter (where anulada_en is not null),
+    'primer_consecutivo', min(ticket),
+    'ultimo_consecutivo', max(ticket),
+    'por_vendedor', coalesce((
+      select jsonb_agg(jsonb_build_object('vendedor', vendedor, 'ventas', n, 'total', t) order by t desc)
+      from (select vendedor, count(distinct ticket) n, sum(total) t from public.ventas
+            where public.dia_negocio(vendido_en) = v_fecha and anulada_en is null group by vendedor) x
+    ), '[]'::jsonb)
+  )
+  into v_totales
+  from public.ventas
+  where public.dia_negocio(vendido_en) = v_fecha;
+
+  insert into public.cierres (fecha, cerrado_por, usuario, totales)
+  values (v_fecha, v_persona ->> 'nombre', public.usuario_actual(), v_totales)
+  returning * into v_cierre;
+
+  return jsonb_build_object('ok', true, 'cierre', to_jsonb(v_cierre));
+end
+$$;
+
+-- ---------------------------------------------------------------------
+-- Tickets del día (pestaña Administración de atención al público)
+-- ---------------------------------------------------------------------
+
+-- Tickets de hoy SIN dinero: número, hora, vendedor y productos con cantidad.
+create or replace function public.tickets_del_dia()
+returns jsonb
+language plpgsql
+stable
+security definer
+set search_path = ''
+as $$
+begin
+  if public.rol_actual() is null then
+    raise exception 'No tienes permiso.' using errcode = '42501';
+  end if;
+  return (
+    select coalesce(jsonb_agg(t order by numero desc), '[]'::jsonb)
+    from (
+      select ticket as numero, jsonb_build_object(
+        'ticket', ticket,
+        'numero_dia', max(numero_dia),
+        'vendido_en', min(vendido_en),
+        'vendedor', max(vendedor),
+        'anulado', bool_and(anulada_en is not null),
+        'lineas_anuladas', count(*) filter (where anulada_en is not null),
+        'lineas', jsonb_agg(jsonb_build_object('codigo', codigo, 'nombre', nombre, 'cantidad', cantidad,
+                                               'anulada', anulada_en is not null) order by id)
+      ) as t
+      from public.ventas
+      where public.dia_negocio(vendido_en) = public.dia_negocio(now())
+      group by ticket
+    ) x
+  );
+end
+$$;
+
+-- Anula un ticket completo (todas sus líneas que sigan vendidas) y devuelve
+-- las unidades al inventario. Necesita la clave del jefe (el jefe no).
+-- Atención al público solo puede anular tickets de hoy; nunca de un día cerrado.
+create or replace function public.anular_ticket(p_ticket bigint, p_clave_jefe text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_error text;
+  v_dia   date;
+  v_linea public.ventas;
+  v_stock integer;
+  v_n     integer := 0;
+begin
+  if public.rol_actual() is null then
+    raise exception 'No tienes permiso.' using errcode = '42501';
+  end if;
+
+  v_error := public.autorizar_con_clave_jefe(p_clave_jefe);
+  if v_error is not null then
+    return jsonb_build_object('ok', false, 'error', v_error, 'campo', 'clave');
+  end if;
+
+  select public.dia_negocio(min(vendido_en)) into v_dia from public.ventas where ticket = p_ticket;
+  if v_dia is null then
+    return jsonb_build_object('ok', false, 'error', 'Ese ticket no existe.');
+  end if;
+  if public.rol_actual() = 'atencion' and v_dia <> public.dia_negocio(now()) then
+    return jsonb_build_object('ok', false, 'error', 'Solo se pueden anular tickets de hoy.');
+  end if;
+  if exists (select 1 from public.cierres where fecha = v_dia and reabierto_en is null) then
+    return jsonb_build_object('ok', false, 'motivo', 'dia_cerrado',
+      'error', 'Ese ticket es de un día que ya se cerró. Para anularlo, el jefe debe reabrir ese día.');
+  end if;
+
+  for v_linea in
+    select * from public.ventas where ticket = p_ticket and anulada_en is null order by producto_id for update
+  loop
+    select cantidad into v_stock from public.productos where id = v_linea.producto_id for update;
+    update public.productos set cantidad = cantidad + v_linea.cantidad where id = v_linea.producto_id;
+    update public.ventas set anulada_en = now(), anulada_por = auth.uid() where id = v_linea.id;
+    insert into public.movimientos
+      (producto_id, codigo, nombre, tipo, cantidad, stock_antes, stock_despues, motivo, venta_id, usuario, vendedor)
+    values (
+      v_linea.producto_id, v_linea.codigo, v_linea.nombre, 'anulacion', v_linea.cantidad,
+      v_stock, v_stock + v_linea.cantidad, format('Ticket %s anulado', p_ticket), v_linea.id, public.usuario_actual(), v_linea.vendedor
+    );
+    v_n := v_n + 1;
+  end loop;
+
+  if v_n = 0 then
+    return jsonb_build_object('ok', false, 'error', 'Ese ticket ya estaba anulado.');
+  end if;
+  return jsonb_build_object('ok', true, 'lineas', v_n);
+end
+$$;
+
+-- Reabrir un día cerrado (solo el jefe): se puede volver a vender o anular.
+create or replace function public.reabrir_dia(p_fecha date)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+begin
+  perform public.solo_jefe();
+  update public.cierres set reabierto_por = public.usuario_actual(), reabierto_en = now()
+  where fecha = p_fecha and reabierto_en is null;
+  if not found then
+    return jsonb_build_object('ok', false, 'error', 'Ese día no está cerrado.');
+  end if;
+  return jsonb_build_object('ok', true);
+end
+$$;
+
+-- ---------------------------------------------------------------------
 -- Configuración: solo el usuario con rol "jefe"
 -- ---------------------------------------------------------------------
 
@@ -835,7 +1318,7 @@ stable
 security definer
 set search_path = ''
 as $$
-  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'nombre', nombre, 'activo', activo)
+  select coalesce(jsonb_agg(jsonb_build_object('id', id, 'nombre', nombre, 'activo', activo, 'puede_cerrar', puede_cerrar)
                             order by activo desc, nombre), '[]'::jsonb)
   from public.vendedores
 $$;
@@ -865,13 +1348,16 @@ begin
     'ok', true,
     'vendedores', public.lista_vendedores(),
     'clave_definida', (select clave_jefe_hash is not null from public.seguridad where id = 1),
-    'precio_requiere_clave', (select precio_requiere_clave from public.configuracion where id = 1)
+    'precio_requiere_clave', (select precio_requiere_clave from public.configuracion where id = 1),
+    'categorias', (select coalesce(jsonb_agg(jsonb_build_object('prefijo', prefijo, 'nombre', nombre) order by nombre), '[]'::jsonb) from public.categorias)
   );
 end
 $$;
 
 -- Crea (p_id null) o modifica un vendedor. p_codigo vacío = conservar el actual.
-create or replace function public.config_guardar_vendedor(p_id bigint, p_nombre text, p_codigo text, p_activo boolean)
+drop function if exists public.config_guardar_vendedor(bigint, text, text, boolean);
+create or replace function public.config_guardar_vendedor(
+  p_id bigint, p_nombre text, p_codigo text, p_activo boolean, p_puede_cerrar boolean)
 returns jsonb
 language plpgsql
 security definer
@@ -897,12 +1383,13 @@ begin
   end if;
 
   if p_id is null then
-    insert into public.vendedores (nombre, codigo_hash, activo)
-    values (trim(p_nombre), extensions.crypt(v_codigo, extensions.gen_salt('bf', 8)), coalesce(p_activo, true));
+    insert into public.vendedores (nombre, codigo_hash, activo, puede_cerrar)
+    values (trim(p_nombre), extensions.crypt(v_codigo, extensions.gen_salt('bf', 8)), coalesce(p_activo, true), coalesce(p_puede_cerrar, false));
   else
     update public.vendedores set
       nombre = trim(p_nombre),
       activo = coalesce(p_activo, activo),
+      puede_cerrar = coalesce(p_puede_cerrar, puede_cerrar),
       codigo_hash = case when v_codigo is null then codigo_hash
                          else extensions.crypt(v_codigo, extensions.gen_salt('bf', 8)) end,
       actualizado_en = now()
@@ -927,6 +1414,42 @@ begin
   perform public.solo_jefe();
   update public.configuracion set precio_requiere_clave = coalesce(p_valor, true) where id = 1;
   return jsonb_build_object('ok', true, 'precio_requiere_clave', coalesce(p_valor, true));
+end
+$$;
+
+-- Crea (p_prefijo_anterior null) o modifica una categoría. Si cambia el nombre,
+-- los productos de esa categoría se actualizan solos.
+create or replace function public.config_guardar_categoria(p_prefijo_anterior text, p_prefijo text, p_nombre text)
+returns jsonb
+language plpgsql
+security definer
+set search_path = ''
+as $$
+declare
+  v_prefijo text := upper(trim(coalesce(p_prefijo, '')));
+  v_nombre  text := regexp_replace(trim(coalesce(p_nombre, '')), '\s+', ' ', 'g');
+begin
+  perform public.solo_jefe();
+  if v_prefijo !~ '^[A-Z]{1,5}$' then
+    return jsonb_build_object('ok', false, 'campo', 'prefijo', 'error', 'La letra debe ser de 1 a 5 letras, sin números ni símbolos (ej: L).');
+  end if;
+  if v_nombre = '' then
+    return jsonb_build_object('ok', false, 'campo', 'nombre', 'error', 'Escribe el nombre de la categoría.');
+  end if;
+  begin
+    if p_prefijo_anterior is null then
+      insert into public.categorias (prefijo, nombre) values (v_prefijo, v_nombre);
+    else
+      update public.categorias set prefijo = v_prefijo, nombre = v_nombre where prefijo = upper(p_prefijo_anterior);
+      if not found then
+        return jsonb_build_object('ok', false, 'error', 'Esa categoría ya no existe.');
+      end if;
+    end if;
+  exception when unique_violation then
+    return jsonb_build_object('ok', false, 'error', 'Ya existe una categoría con esa letra o con ese nombre.');
+  end;
+  return jsonb_build_object('ok', true, 'categorias',
+    (select coalesce(jsonb_agg(jsonb_build_object('prefijo', prefijo, 'nombre', nombre) order by nombre), '[]'::jsonb) from public.categorias));
 end
 $$;
 
@@ -955,18 +1478,20 @@ $$;
 -- Privilegios: nada para anónimos; lo mínimo para usuarios con sesión
 -- ---------------------------------------------------------------------
 
+revoke all on public.categorias from anon, authenticated;
 revoke all on public.perfiles, public.productos, public.configuracion, public.ventas,
               public.seguridad, public.vendedores, public.movimientos, public.historial_precios,
-              public.numeracion from anon, authenticated;
+              public.numeracion, public.cierres from anon, authenticated;
 
 grant select on public.perfiles to authenticated;
+grant select on public.categorias to authenticated;
 -- Los productos no se escriben directamente: se crean y editan con guardar_producto
 -- e importar_productos, y la cantidad solo cambia con ventas, anulaciones, entradas
 -- y salidas. Así cada precio queda en el historial y se respeta la clave del jefe.
 grant select, delete on public.productos to authenticated;
 grant select on public.configuracion to authenticated;
 grant update (tasa_usd) on public.configuracion to authenticated;
-grant select on public.ventas, public.movimientos, public.historial_precios to authenticated;
+grant select on public.ventas, public.movimientos, public.historial_precios, public.cierres to authenticated;
 -- seguridad y vendedores: sin ningún permiso (solo las funciones las usan).
 
 -- Funciones internas: nadie las llama directamente.
@@ -978,31 +1503,52 @@ revoke execute on function public.lista_vendedores() from public, anon, authenti
 revoke execute on function public.autorizar_con_clave_jefe(text) from public, anon, authenticated;
 revoke execute on function public.solo_jefe() from public, anon, authenticated;
 revoke execute on function public.anotar_cambio_precio() from public, anon, authenticated;
+revoke execute on function public.categoria_valida(text, text) from public, anon, authenticated;
+revoke execute on function public.prefijo_codigo(text) from public, anon, authenticated;
+revoke execute on function public.texto_categorias() from public, anon, authenticated;
+revoke execute on function public.precio_ajustado(numeric, text, text, numeric, integer) from public, anon, authenticated;
+revoke execute on function public.dia_negocio(timestamptz) from public, anon, authenticated;
 
 -- Funciones que usa la app (solo con sesión iniciada; cada una revisa el rol).
 revoke execute on function public.rol_actual() from public, anon;
-revoke execute on function public.buscar_productos(text) from public, anon;
+revoke execute on function public.buscar_productos(text, text) from public, anon;
+revoke execute on function public.lista_categorias() from public, anon;
+revoke execute on function public.cambiar_precios_masivo(text, text, text, numeric, integer, boolean, text) from public, anon;
+revoke execute on function public.estado_dia(date) from public, anon;
+revoke execute on function public.cerrar_dia(date, text) from public, anon;
+revoke execute on function public.reabrir_dia(date) from public, anon;
+revoke execute on function public.tickets_del_dia() from public, anon;
+revoke execute on function public.anular_ticket(bigint, text) from public, anon;
 revoke execute on function public.registrar_venta(bigint, integer, text) from public, anon;
 revoke execute on function public.anular_venta(bigint, text) from public, anon;
 revoke execute on function public.registrar_movimiento(bigint, text, integer, text, text) from public, anon;
 revoke execute on function public.config_estado() from public, anon;
-revoke execute on function public.config_guardar_vendedor(bigint, text, text, boolean) from public, anon;
+revoke execute on function public.config_guardar_vendedor(bigint, text, text, boolean, boolean) from public, anon;
 revoke execute on function public.config_definir_clave_jefe(text) from public, anon;
+revoke execute on function public.config_guardar_categoria(text, text, text) from public, anon;
 revoke execute on function public.config_precio_requiere_clave(boolean) from public, anon;
 revoke execute on function public.registrar_venta_multiple(jsonb, text) from public, anon;
-revoke execute on function public.guardar_producto(bigint, text, text, text, numeric, text) from public, anon;
+revoke execute on function public.guardar_producto(bigint, text, text, text, text, numeric, text) from public, anon;
 revoke execute on function public.importar_productos(jsonb, text, text) from public, anon;
 grant execute on function public.rol_actual() to authenticated;
-grant execute on function public.buscar_productos(text) to authenticated;
+grant execute on function public.buscar_productos(text, text) to authenticated;
+grant execute on function public.lista_categorias() to authenticated;
+grant execute on function public.cambiar_precios_masivo(text, text, text, numeric, integer, boolean, text) to authenticated;
+grant execute on function public.estado_dia(date) to authenticated;
+grant execute on function public.cerrar_dia(date, text) to authenticated;
+grant execute on function public.reabrir_dia(date) to authenticated;
+grant execute on function public.tickets_del_dia() to authenticated;
+grant execute on function public.anular_ticket(bigint, text) to authenticated;
 grant execute on function public.registrar_venta(bigint, integer, text) to authenticated;
 grant execute on function public.anular_venta(bigint, text) to authenticated;
 grant execute on function public.registrar_movimiento(bigint, text, integer, text, text) to authenticated;
 grant execute on function public.config_estado() to authenticated;
-grant execute on function public.config_guardar_vendedor(bigint, text, text, boolean) to authenticated;
+grant execute on function public.config_guardar_vendedor(bigint, text, text, boolean, boolean) to authenticated;
 grant execute on function public.config_definir_clave_jefe(text) to authenticated;
+grant execute on function public.config_guardar_categoria(text, text, text) to authenticated;
 grant execute on function public.config_precio_requiere_clave(boolean) to authenticated;
 grant execute on function public.registrar_venta_multiple(jsonb, text) to authenticated;
-grant execute on function public.guardar_producto(bigint, text, text, text, numeric, text) to authenticated;
+grant execute on function public.guardar_producto(bigint, text, text, text, text, numeric, text) to authenticated;
 grant execute on function public.importar_productos(jsonb, text, text) to authenticated;
 
 -- ---------------------------------------------------------------------
@@ -1015,7 +1561,9 @@ alter table public.configuracion enable row level security;
 alter table public.ventas        enable row level security;
 alter table public.movimientos   enable row level security;
 alter table public.historial_precios enable row level security;
-alter table public.numeracion    enable row level security;   -- sin políticas: solo la usa registrar_venta_multiple
+alter table public.numeracion    enable row level security;
+alter table public.cierres       enable row level security;
+alter table public.categorias    enable row level security;   -- sin políticas: solo la usa registrar_venta_multiple
 alter table public.seguridad     enable row level security;   -- sin políticas: nadie la lee
 alter table public.vendedores    enable row level security;   -- sin políticas: nadie la lee
 
@@ -1023,6 +1571,16 @@ alter table public.vendedores    enable row level security;   -- sin políticas:
 -- ni borra directamente: se usan las funciones de arriba.
 drop policy if exists "ver ventas" on public.ventas;
 create policy "ver ventas" on public.ventas
+  for select to authenticated
+  using ((select public.rol_actual()) in ('admin', 'jefe'));
+
+drop policy if exists "ver categorias" on public.categorias;
+create policy "ver categorias" on public.categorias
+  for select to authenticated
+  using ((select public.rol_actual()) is not null);
+
+drop policy if exists "ver cierres" on public.cierres;
+create policy "ver cierres" on public.cierres
   for select to authenticated
   using ((select public.rol_actual()) in ('admin', 'jefe'));
 

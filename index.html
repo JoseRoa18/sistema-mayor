@@ -78,9 +78,10 @@
       </div>
     </header>
 
-    <nav class="pestanas solo-admin" aria-label="Secciones">
+    <nav class="pestanas" aria-label="Secciones">
       <button type="button" class="pestana" data-seccion="inventario" aria-current="page">Inventario</button>
-      <button type="button" class="pestana" data-seccion="cierre">Reportes</button>
+      <button type="button" class="pestana solo-admin" data-seccion="cierre">Reportes</button>
+      <button type="button" class="pestana solo-atencion" data-seccion="administracion">Administración</button>
       <button type="button" class="pestana solo-jefe" data-seccion="configuracion">Configuración</button>
     </nav>
 
@@ -104,12 +105,22 @@
       </section>
 
       <div class="encabezado-lista">
-        <p id="conteo" class="conteo"></p>
-        <div class="acciones-lista solo-admin">
-          <button id="btn-importar" type="button" class="btn btn-secundario">Importar Excel</button>
-          <button id="btn-nuevo" type="button" class="btn btn-primario">+ Nuevo producto</button>
+        <div class="filtros-lista">
+          <select id="filtro-categoria" aria-label="Filtrar por categoría">
+            <option value="">Todas las categorías</option>
+          </select>
+          <p id="conteo" class="conteo"></p>
+        </div>
+        <div class="acciones-lista">
+          <button id="btn-lista-precios" type="button" class="btn btn-secundario" title="Descargar la lista de precios en PDF">Lista de precios</button>
+          <button id="btn-cerrar-dia" type="button" class="btn btn-secundario">Cerrar el día</button>
+          <button id="btn-precios-bloque" type="button" class="btn btn-secundario solo-admin">Precios en bloque</button>
+          <button id="btn-importar" type="button" class="btn btn-secundario solo-admin">Importar Excel</button>
+          <button id="btn-nuevo" type="button" class="btn btn-primario solo-admin">+ Nuevo producto</button>
         </div>
       </div>
+
+      <p id="aviso-dia-cerrado" class="alerta alerta-aviso" hidden></p>
 
       <div class="tabla-contenedor">
         <table class="tabla">
@@ -154,8 +165,17 @@
               <input id="reporte-hasta" type="date" aria-label="Hasta">
             </span>
             <button id="btn-actualizar" type="button" class="btn btn-secundario">Actualizar</button>
-            <button id="btn-excel" type="button" class="btn btn-secundario">Descargar Excel</button>
-            <button id="btn-pdf" type="button" class="btn btn-primario">Descargar PDF</button>
+            <button id="btn-excel" type="button" class="btn btn-secundario">Excel detallado</button>
+            <button id="btn-pdf-detallado" type="button" class="btn btn-secundario">PDF detallado</button>
+            <button id="btn-pdf" type="button" class="btn btn-primario">PDF resumen</button>
+          </div>
+        </div>
+
+        <div id="estado-dia" class="estado-dia" hidden>
+          <p id="estado-dia-texto"></p>
+          <div class="estado-dia-acciones">
+            <button id="btn-reporte-cerrar" type="button" class="btn btn-primario btn-sm">Cerrar este día</button>
+            <button id="btn-reabrir" type="button" class="btn btn-secundario btn-sm solo-jefe">Reabrir el día</button>
           </div>
         </div>
 
@@ -256,11 +276,11 @@
           <div class="tarjeta-encabezado">
             <div>
               <h2>Ventas por carrito</h2>
-              <p class="tarjeta-nota">Cada venta tiene un número consecutivo. Toca una para ver su detalle.</p>
+              <p class="tarjeta-nota">Cada día las ventas empiezan en #1; el consecutivo interno nunca se reinicia. Toca una venta para ver su detalle.</p>
             </div>
             <form id="form-buscar-venta" class="buscar-venta" novalidate>
-              <label for="buscar-venta-numero" class="sr-only">Número de venta</label>
-              <input id="buscar-venta-numero" name="numero" type="number" min="1" step="1" inputmode="numeric" placeholder="N.º de venta">
+              <label for="buscar-venta-numero" class="sr-only">Consecutivo de la venta</label>
+              <input id="buscar-venta-numero" name="numero" type="number" min="1" step="1" inputmode="numeric" placeholder="Consecutivo">
               <button type="submit" class="btn btn-secundario btn-sm">Ver venta</button>
             </form>
           </div>
@@ -268,7 +288,7 @@
             <table class="tabla-simple tabla-carritos">
               <thead>
                 <tr>
-                  <th>N.º</th><th>Fecha y hora</th><th>Vendedor</th><th class="num">Productos</th>
+                  <th>N.º del día</th><th>Consecutivo</th><th>Fecha y hora</th><th>Vendedor</th><th class="num">Productos</th>
                   <th class="num">Unidades</th><th class="num">Total</th><th>Estado</th>
                 </tr>
               </thead>
@@ -296,6 +316,22 @@
         </section>
       </section>
 
+      <!-- ---------- Administración (atención al público): tickets de hoy ---------- -->
+      <section id="seccion-administracion" hidden>
+        <div class="cierre-encabezado">
+          <div>
+            <h1 class="cierre-titulo">Tickets de hoy</h1>
+            <p id="tickets-subtitulo" class="cierre-subtitulo"></p>
+          </div>
+          <div class="cierre-controles">
+            <button id="btn-tickets-actualizar" type="button" class="btn btn-secundario">Actualizar</button>
+          </div>
+        </div>
+        <p class="ayuda">Para anular un ticket se necesita la clave del jefe. Las unidades vuelven al inventario.</p>
+        <ul id="lista-tickets" class="lista-tickets"></ul>
+        <p id="vacio-tickets" class="vacio-simple" hidden>Todavía no hay ventas hoy.</p>
+      </section>
+
       <!-- ---------- Configuración (solo el jefe) ---------- -->
       <section id="seccion-configuracion" hidden>
         <h1 class="cierre-titulo">Configuración</h1>
@@ -303,8 +339,8 @@
 
         <div class="config-columnas">
           <section class="tarjeta config-tarjeta">
-            <h2>Vendedores</h2>
-            <p class="tarjeta-nota">Cada vendedor escribe su código al registrar una venta. Los códigos se guardan cifrados: nadie puede verlos, ni siquiera aquí; si alguien olvida el suyo, asígnale uno nuevo.</p>
+            <h2>Personal: vendedores y cierre</h2>
+            <p class="tarjeta-nota">Cada persona escribe su código al registrar una venta o al hacer el cierre del día (si tiene ese permiso). Los códigos se guardan cifrados: nadie puede verlos, ni siquiera aquí; si alguien olvida el suyo, asígnale uno nuevo.</p>
             <ul id="config-vendedores" class="lista-vendedores"></ul>
             <p id="config-sin-vendedores" class="vacio-simple" hidden>Todavía no hay vendedores. Crea el primero abajo.</p>
 
@@ -321,7 +357,10 @@
                 </label>
               </div>
               <label class="casilla" id="vendedor-activo-fila" hidden>
-                <input type="checkbox" name="activo" checked> Activo (puede vender)
+                <input type="checkbox" name="activo" checked> Activo (su código funciona)
+              </label>
+              <label class="casilla">
+                <input type="checkbox" name="puede_cerrar"> Puede hacer el cierre del día
               </label>
               <p id="vendedor-error" class="alerta alerta-error" role="alert" hidden></p>
               <div class="dialogo-acciones">
@@ -349,6 +388,29 @@
                 <button type="submit" class="btn btn-primario">Guardar clave</button>
               </div>
             </form>
+
+            <div class="bloque-jefe">
+              <h3>Categorías</h3>
+              <p class="tarjeta-nota">La letra es con la que empiezan los códigos de esa categoría (L-2054 → Lavadora): al crear o importar un producto, la categoría se elige sola por esa letra.</p>
+              <ul id="config-categorias" class="lista-vendedores"></ul>
+              <form id="form-categoria" novalidate>
+                <div class="fila-categoria">
+                  <label class="campo">
+                    <span>Letra</span>
+                    <input name="prefijo" maxlength="5" autocomplete="off" autocapitalize="characters" class="input-codigo" required>
+                  </label>
+                  <label class="campo">
+                    <span>Nombre</span>
+                    <input name="nombre" maxlength="40" autocomplete="off" required>
+                  </label>
+                </div>
+                <p id="categoria-error" class="alerta alerta-error" role="alert" hidden></p>
+                <div class="dialogo-acciones">
+                  <button type="button" id="btn-categoria-cancelar" class="btn btn-fantasma" hidden>Cancelar edición</button>
+                  <button type="submit" id="btn-categoria-guardar" class="btn btn-secundario">Agregar categoría</button>
+                </div>
+              </form>
+            </div>
 
             <div class="bloque-jefe">
               <h3>Precios</h3>
@@ -402,7 +464,7 @@
   <!-- ============ DIÁLOGO: ANULAR VENTA ============ -->
   <dialog id="dlg-anular" class="dialogo dialogo-sm">
     <form id="form-anular" novalidate>
-      <h2>Anular venta</h2>
+      <h2 id="anular-titulo">Anular venta</h2>
       <p>¿Anular <strong id="anular-detalle"></strong>? Las unidades vuelven al inventario.</p>
       <label class="campo campo-clave-jefe">
         <span>Clave del jefe</span>
@@ -428,6 +490,12 @@
       <label class="campo">
         <span>Nombre</span>
         <input name="nombre" maxlength="150" required>
+      </label>
+      <label class="campo">
+        <span>Categoría</span>
+        <select name="categoria" required>
+          <option value="">Elige la categoría…</option>
+        </select>
       </label>
       <label class="campo">
         <span>Descripción</span>
@@ -555,7 +623,7 @@
       <ol class="pasos-importar">
         <li>
           Descarga la plantilla: ya trae todos los productos actuales. Corrige lo que necesites
-          o agrega filas nuevas (código, nombre, descripción, cantidad, precio en pesos).
+          o agrega filas nuevas (código, nombre, descripción, categoría, cantidad, precio en pesos).
           <div><button type="button" id="btn-plantilla" class="btn btn-secundario btn-sm">Descargar plantilla</button></div>
         </li>
         <li>
@@ -577,7 +645,7 @@
         <p id="importar-resumen" class="nota-stock"></p>
         <div class="tabla-desplazable importar-tabla">
           <table class="tabla-simple">
-            <thead><tr><th>Fila</th><th>Código</th><th>Producto</th><th class="num">Cantidad</th><th class="num">Precio</th><th>Resultado</th></tr></thead>
+            <thead><tr><th>Fila</th><th>Código</th><th>Producto</th><th>Categoría</th><th class="num">Cantidad</th><th class="num">Precio</th><th>Resultado</th></tr></thead>
             <tbody id="importar-filas"></tbody>
           </table>
         </div>
@@ -624,8 +692,105 @@
       </div>
 
       <div class="dialogo-acciones">
+        <button type="button" id="btn-venta-anular" class="btn btn-peligro-suave accion-izquierda solo-admin">Anular venta completa</button>
         <button type="button" class="btn btn-fantasma" data-cerrar>Cerrar</button>
         <button type="button" id="btn-venta-pdf" class="btn btn-primario">Descargar PDF</button>
+      </div>
+    </div>
+  </dialog>
+
+  <!-- ============ DIÁLOGO: PRECIOS EN BLOQUE ============ -->
+  <dialog id="dlg-precios" class="dialogo dialogo-ancho">
+    <form id="form-precios" novalidate>
+      <h2>Subir o bajar precios en bloque</h2>
+
+      <div class="fila-2">
+        <label class="campo">
+          <span>Productos</span>
+          <select name="categoria" id="precios-categoria">
+            <option value="">Todos los productos</option>
+          </select>
+        </label>
+        <label class="campo">
+          <span>Redondear el resultado a</span>
+          <select name="redondeo">
+            <option value="1">Sin redondear</option>
+            <option value="50">$ 50</option>
+            <option value="100" selected>$ 100</option>
+            <option value="500">$ 500</option>
+            <option value="1000">$ 1.000</option>
+          </select>
+        </label>
+      </div>
+
+      <div class="fila-2">
+        <div class="segmentado" role="radiogroup" aria-label="Subir o bajar">
+          <label><input type="radio" name="operacion" value="subir" checked><span>Subir (+)</span></label>
+          <label><input type="radio" name="operacion" value="bajar"><span>Bajar (−)</span></label>
+        </div>
+        <div class="segmentado" role="radiogroup" aria-label="Por porcentaje o por monto">
+          <label><input type="radio" name="tipo" value="porcentaje" checked><span>Porcentaje (%)</span></label>
+          <label><input type="radio" name="tipo" value="monto"><span>Monto ($)</span></label>
+        </div>
+      </div>
+
+      <label class="campo">
+        <span id="precios-valor-etiqueta">Porcentaje</span>
+        <input name="valor" inputmode="decimal" placeholder="Ej: 10" required>
+      </label>
+
+      <div id="precios-vista" hidden>
+        <p id="precios-resumen" class="nota-stock"></p>
+        <div class="tabla-desplazable importar-tabla">
+          <table class="tabla-simple">
+            <thead><tr><th>Código</th><th>Producto</th><th>Categoría</th><th class="num">Antes</th><th class="num">Después</th></tr></thead>
+            <tbody id="precios-filas"></tbody>
+          </table>
+        </div>
+      </div>
+
+      <label id="precios-clave" class="campo campo-clave-jefe">
+        <span>Clave del jefe</span>
+        <input name="clave" class="input-secreto" autocomplete="off" autocapitalize="off" spellcheck="false">
+      </label>
+
+      <p id="precios-error" class="alerta alerta-error" role="alert" hidden></p>
+
+      <div class="dialogo-acciones">
+        <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+        <button type="button" id="btn-precios-vista" class="btn btn-secundario">Ver cómo quedan</button>
+        <button type="submit" class="btn btn-primario" disabled>Aplicar cambios</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ============ DIÁLOGO: CIERRE DEL DÍA ============ -->
+  <dialog id="dlg-cierre" class="dialogo dialogo-sm">
+    <form id="form-cierre" novalidate>
+      <h2 id="cierre-dlg-titulo">Cerrar el día</h2>
+      <p id="cierre-dlg-texto"></p>
+      <p class="ayuda">Al cerrar el día no se pueden registrar más ventas ni anular ventas de ese día. Solo el jefe puede reabrirlo.</p>
+
+      <label class="campo">
+        <span>Código de quien cierra</span>
+        <input name="codigo" class="input-secreto" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      </label>
+
+      <p id="cierre-dlg-error" class="alerta alerta-error" role="alert" hidden></p>
+
+      <div class="dialogo-acciones">
+        <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+        <button type="submit" class="btn btn-primario">Cerrar el día</button>
+      </div>
+    </form>
+
+    <!-- Resultado del cierre -->
+    <div id="cierre-hecho" class="dialogo-cuerpo" hidden>
+      <h2>Día cerrado</h2>
+      <p id="cierre-hecho-texto"></p>
+      <ul id="cierre-hecho-totales" class="cierre-totales"></ul>
+      <div class="dialogo-acciones">
+        <button type="button" class="btn btn-primario" data-cerrar>Listo</button>
       </div>
     </div>
   </dialog>
