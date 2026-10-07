@@ -9,7 +9,7 @@
   --borde: #e2e8f0;
   --texto: #0f172a;
   --texto-2: #475569;
-  --texto-3: #64748b;
+  --texto-3: #5f6e84;
   --primario: #0f766e;
   --primario-hover: #115e59;
   --primario-suave: #ccfbf1;
@@ -29,31 +29,32 @@
   color-scheme: light;
 }
 
-@media (prefers-color-scheme: dark) {
-  :root {
-    --fondo: #0b1120;
-    --superficie: #111827;
-    --superficie-2: #0f172a;
-    --borde: #1f2937;
-    --texto: #e5e7eb;
-    --texto-2: #cbd5e1;
-    --texto-3: #94a3b8;
-    --primario: #14b8a6;
-    --primario-hover: #2dd4bf;
-    --primario-suave: #134e4a;
-    --primario-texto: #042f2e;
-    --peligro: #ef4444;
-    --peligro-hover: #f87171;
-    --peligro-suave: #450a0a;
-    --peligro-texto-suave: #fca5a5;
-    --aviso-suave: #422006;
-    --aviso-texto: #fcd34d;
-    --ok-suave: #052e16;
-    --ok-texto: #86efac;
-    --sombra: 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 16px rgb(0 0 0 / 0.25);
-    --sombra-alta: 0 20px 50px rgb(0 0 0 / 0.6);
-    color-scheme: dark;
-  }
+/* Modo oscuro. El atributo data-tema lo pone js/tema.js (y el script del <head>
+   antes de pintar): "oscuro" si se eligió Oscuro, o si se eligió Automático y el
+   equipo está en modo oscuro. */
+:root[data-tema="oscuro"] {
+  --fondo: #0b1120;
+  --superficie: #111827;
+  --superficie-2: #0f172a;
+  --borde: #1f2937;
+  --texto: #e5e7eb;
+  --texto-2: #cbd5e1;
+  --texto-3: #94a3b8;
+  --primario: #14b8a6;
+  --primario-hover: #2dd4bf;
+  --primario-suave: #0f3f3b;
+  --primario-texto: #042f2e;
+  --peligro: #ef4444;
+  --peligro-hover: #f87171;
+  --peligro-suave: #450a0a;
+  --peligro-texto-suave: #fca5a5;
+  --aviso-suave: #422006;
+  --aviso-texto: #fcd34d;
+  --ok-suave: #052e16;
+  --ok-texto: #86efac;
+  --sombra: 0 1px 2px rgb(0 0 0 / 0.3), 0 4px 16px rgb(0 0 0 / 0.25);
+  --sombra-alta: 0 20px 50px rgb(0 0 0 / 0.6);
+  color-scheme: dark;
 }
 
 *, *::before, *::after { box-sizing: border-box; }
@@ -523,6 +524,59 @@ body.con-carrito .toast { bottom: 104px; }
 .tabla-simple tr.fila-error td { background: var(--peligro-suave); color: var(--peligro-texto-suave); }
 .tabla-simple tr.fila-nueva td:last-child { color: var(--ok-texto); font-weight: 600; }
 .tabla-simple tr.fila-cambio td:last-child { color: var(--aviso-texto); font-weight: 600; }
+
+/* ---------------- Reporte por carrito ---------------- */
+
+.tarjeta-encabezado { display: flex; flex-wrap: wrap; align-items: flex-start; justify-content: space-between; gap: 12px; }
+.buscar-venta { display: flex; gap: 6px; }
+.buscar-venta input { width: 130px; height: 32px; padding: 0 10px; }
+.enlace-venta {
+  padding: 0; border: 0; background: none; cursor: pointer;
+  font: inherit; font-weight: 700; color: var(--primario); text-decoration: underline; text-underline-offset: 3px;
+}
+.enlace-venta:focus-visible { outline: 3px solid color-mix(in srgb, var(--primario) 40%, transparent); outline-offset: 2px; border-radius: 4px; }
+.tabla-simple tr.fila-clic { cursor: pointer; }
+.tabla-simple tr.fila-clic:hover td { background: var(--superficie-2); }
+
+.dialogo .dialogo-cuerpo { padding: 24px; }
+.venta-encabezado { display: flex; align-items: flex-start; justify-content: space-between; gap: 12px; margin-bottom: 8px; }
+.venta-encabezado h2 { margin-bottom: 2px; }
+.venta-encabezado .cierre-subtitulo::first-letter { text-transform: none; }
+
+/* ---------------- Tema claro / oscuro ---------------- */
+
+.btn-tema { width: 36px; height: 36px; padding: 0; flex: none; }
+.icono-tema { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+/* El botón muestra el tema que se ve ahora: sol en claro, luna en oscuro */
+:root[data-tema="oscuro"] .icono-sol,
+:root:not([data-tema="oscuro"]) .icono-luna { display: none; }
+
+.login { position: relative; }
+.login-tema { position: absolute; top: 16px; right: 16px; }
+
+.menu-tema {
+  position: fixed; z-index: 200; min-width: 230px; padding: 6px;
+  background: var(--superficie); border: 1px solid var(--borde); border-radius: var(--radio);
+  box-shadow: var(--sombra-alta);
+}
+.menu-tema button {
+  display: flex; align-items: center; gap: 10px; width: 100%; padding: 9px 10px;
+  border: 0; border-radius: var(--radio-sm); background: none; color: var(--texto);
+  font: inherit; font-size: 14px; text-align: left; cursor: pointer;
+}
+.menu-tema button:hover, .menu-tema button:focus-visible { background: var(--superficie-2); outline: none; }
+.menu-tema button[aria-checked="true"] { color: var(--primario); font-weight: 600; }
+.menu-tema button[aria-checked="true"]::after { content: '✓'; margin-left: auto; }
+.menu-tema svg { width: 16px; height: 16px; flex: none; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
+.menu-tema small { color: var(--texto-3); font-weight: 400; }
+
+/* Transición suave solo mientras se cambia de tema */
+.cambiando-tema, .cambiando-tema *, .cambiando-tema *::before, .cambiando-tema *::after {
+  transition: background-color .3s ease, border-color .3s ease, color .3s ease, box-shadow .3s ease !important;
+}
+@media (prefers-reduced-motion: reduce) {
+  .cambiando-tema, .cambiando-tema * { transition: none !important; }
+}
 
 /* ---------------- Aviso flotante ---------------- */
 

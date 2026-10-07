@@ -38,7 +38,6 @@ window.Exportar = (function () {
   const num = new Intl.NumberFormat('es-CO', { maximumFractionDigits: 2 });
   const porcentaje = new Intl.NumberFormat('es-CO', { minimumFractionDigits: 1, maximumFractionDigits: 1 });
   const plural = (n, uno, varios) => `${num.format(n)} ${n === 1 ? uno : varios}`;
-  const hora = new Intl.DateTimeFormat('es-CO', { timeZone: ZONA, hour: 'numeric', minute: '2-digit' });
   const fechaHora = new Intl.DateTimeFormat('es-CO', { timeZone: ZONA, dateStyle: 'medium', timeStyle: 'short' });
   const partes = new Intl.DateTimeFormat('en-CA', {
     timeZone: ZONA, year: 'numeric', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit', second: '2-digit', hourCycle: 'h23',
@@ -54,10 +53,7 @@ window.Exportar = (function () {
     ? `Cierre-del-dia-${c.desde}.${extension}`
     : `Reporte-${c.desde}_a_${c.hasta}.${extension}`);
   const tituloReporte = (c) => (c.unDia ? 'Cierre del día' : 'Reporte de ventas');
-  const diaCorto = new Intl.DateTimeFormat('es-CO', { timeZone: ZONA, day: 'numeric', month: 'short' });
   const diaLargo = new Intl.DateTimeFormat('es-CO', { timeZone: 'UTC', dateStyle: 'full' });
-  // Un solo día: solo la hora. Varios días: fecha corta y hora.
-  const cuando = (c, iso) => limpio(c.unDia ? hora.format(new Date(iso)) : `${diaCorto.format(new Date(iso))} ${hora.format(new Date(iso))}`);
   const TIPO_MOVIMIENTO = { entrada: 'Entrada', salida: 'Salida', anulacion: 'Venta anulada' };
   const unidadesDe = (c, tipos) => c.movimientos.filter((m) => tipos.includes(m.tipo)).reduce((s, m) => s + m.cantidad, 0);
   const mayuscula = (t) => t.charAt(0).toUpperCase() + t.slice(1);
@@ -233,6 +229,32 @@ window.Exportar = (function () {
       hojaVentas.getCell(5, 1).value = 'No hubo ventas en este periodo.';
     }
 
+    // ---- Hoja: Por carrito (una fila por venta) ----
+    const hojaCarritos = libro.addWorksheet('Por carrito');
+    const colCarritos = [
+      { titulo: 'N.º venta', ancho: 10 },
+      c.unDia ? { titulo: 'Hora', ancho: 11, formato: 'h:mm AM/PM' } : { titulo: 'Fecha y hora', ancho: 19, formato: 'd/mm/yyyy h:mm AM/PM' },
+      { titulo: 'Vendedor', ancho: 16 },
+      { titulo: 'Productos', ancho: 11, formato: FMT_NUM },
+      { titulo: 'Unidades', ancho: 11, formato: FMT_NUM },
+      { titulo: 'Total (pesos)', ancho: 17, formato: FMT_COP },
+      { titulo: 'Estado', ancho: 18 },
+    ];
+    encabezado(hojaCarritos, 'Ventas por carrito', colCarritos.length);
+    const carritos = [...c.porCarrito].sort((a, b) => (a.ticket ?? 0) - (b.ticket ?? 0));
+    const ultimaCarrito = tabla(hojaCarritos, 4, colCarritos, carritos.map((g) => [
+      g.ticket ? `#${g.ticket}` : '', horaLocalParaExcel(g.vendido_en), g.vendedor, g.lineas, g.unidades, g.total, g.estado,
+    ]));
+    carritos.forEach((g, i) => {
+      if (g.estado === 'Completa') return;
+      hojaCarritos.getRow(5 + i).getCell(7).font = { bold: true, color: { argb: `FF${COLOR.rojo}` } };
+    });
+    if (carritos.length) {
+      filaTotal(hojaCarritos, ultimaCarrito + 1, ['TOTAL', null, `${c.numVentas} ventas`, null, c.unidades, c.totalCOP, null], colCarritos);
+    } else {
+      hojaCarritos.getCell(5, 1).value = 'No hubo ventas en este periodo.';
+    }
+
     // ---- Hoja: Por día (solo si el periodo tiene varios días) ----
     if (!c.unDia) {
       const hojaDia = libro.addWorksheet('Por día');
@@ -388,254 +410,250 @@ window.Exportar = (function () {
   // Las fuentes básicas del PDF no traen el espacio especial que usa Intl.
   const limpio = (t) => String(t).replace(/[  ]/g, ' ');
   const rgb = (hex) => [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
+  const MARGEN = 40;
 
-  async function pdf(c) {
+  // Documento A4 con la franja de color del encabezado.
+  async function nuevoPdf(titulo, derecha, generado) {
     await cargar('pdf');
-    const { jsPDF } = window.jspdf;
-    const doc = new jsPDF({ unit: 'pt', format: 'a4' });
+    const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'a4' });
     const ancho = doc.internal.pageSize.getWidth();
-    const margen = 40;
-
-    // ---- Encabezado ----
     doc.setFillColor(...rgb(COLOR.primario));
     doc.rect(0, 0, ancho, 78, 'F');
     doc.setTextColor(255, 255, 255);
     doc.setFont('helvetica', 'normal');
     doc.setFontSize(10);
-    doc.text('SISTEMA MAYOR', margen, 30);
+    doc.text('SISTEMA MAYOR', MARGEN, 30);
     doc.setFont('helvetica', 'bold');
     doc.setFontSize(20);
-    doc.text(tituloReporte(c), margen, 56);
+    doc.text(titulo, MARGEN, 56);
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(11);
-    doc.setFontSize(c.unDia ? 11 : 10);
-    doc.text(limpio(mayuscula(c.periodoTexto)), ancho - margen, 56, { align: 'right' });
-
+    doc.setFontSize(derecha.length > 32 ? 10 : 11);
+    doc.text(limpio(derecha), ancho - MARGEN, 56, { align: 'right' });
     doc.setTextColor(...rgb(COLOR.gris));
     doc.setFontSize(9);
-    doc.text(limpio(`Generado el ${fechaHora.format(c.generadoEn)} por ${c.generadoPor}`), margen, 98);
+    doc.text(limpio(generado), MARGEN, 98);
+    return doc;
+  }
 
-    // ---- Indicadores ----
+  const estiloTabla = {
+    theme: 'grid',
+    rowPageBreak: 'avoid',   // una fila nunca queda partida entre dos páginas
+    margin: { left: MARGEN, right: MARGEN, bottom: 50 },
+    styles: { font: 'helvetica', fontSize: 8.5, cellPadding: 4, lineColor: rgb(COLOR.borde), lineWidth: 0.5, textColor: rgb(COLOR.texto) },
+    headStyles: { fillColor: rgb(COLOR.texto), textColor: 255, fontStyle: 'bold' },
+    alternateRowStyles: { fillColor: rgb(COLOR.grisClaro) },
+    footStyles: { fillColor: rgb(COLOR.primarioClaro), textColor: rgb(COLOR.texto), fontStyle: 'bold' },
+  };
+
+  // Escribe títulos y tablas uno debajo del otro, pasando de página si hace falta.
+  function escritor(doc, yInicial) {
+    let y = yInicial;
+    const alto = doc.internal.pageSize.getHeight();
+    return {
+      titulo(texto, nota) {
+        if (y > alto - 110) { doc.addPage(); y = 50; }
+        doc.setTextColor(...rgb(COLOR.texto));
+        doc.setFont('helvetica', 'bold');
+        doc.setFontSize(11.5);
+        doc.text(texto, MARGEN, y);
+        if (nota) {
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8);
+          doc.setTextColor(...rgb(COLOR.gris));
+          doc.text(limpio(nota), MARGEN, y + 12);
+          y += 12;
+        }
+        y += 7;
+      },
+      tabla(opciones) {
+        doc.autoTable({ ...estiloTabla, ...opciones, startY: y });
+        y = doc.lastAutoTable.finalY + 20;
+      },
+      nota(texto, cursiva = true) {
+        if (y > alto - 70) { doc.addPage(); y = 50; }
+        doc.setFont('helvetica', cursiva ? 'italic' : 'normal');
+        doc.setFontSize(8.5);
+        doc.setTextColor(...rgb(COLOR.gris));
+        const lineas = doc.splitTextToSize(limpio(texto), doc.internal.pageSize.getWidth() - MARGEN * 2);
+        doc.text(lineas, MARGEN, y + 4);
+        y += 12 * lineas.length + 10;
+      },
+      get y() { return y; },
+      set y(v) { y = v; },
+    };
+  }
+
+  function piePaginas(doc, texto) {
+    const paginas = doc.internal.getNumberOfPages();
+    const ancho = doc.internal.pageSize.getWidth();
+    const alto = doc.internal.pageSize.getHeight();
+    for (let i = 1; i <= paginas; i++) {
+      doc.setPage(i);
+      doc.setDrawColor(...rgb(COLOR.borde));
+      doc.setLineWidth(0.5);
+      doc.line(MARGEN, alto - 32, ancho - MARGEN, alto - 32);
+      doc.setFont('helvetica', 'normal');
+      doc.setFontSize(8);
+      doc.setTextColor(...rgb(COLOR.gris));
+      doc.text(limpio(texto), MARGEN, alto - 18);
+      doc.text(`Página ${i} de ${paginas}`, ancho - MARGEN, alto - 18, { align: 'right' });
+    }
+  }
+
+  const MAX_FILAS_RESUMEN = 10;
+
+  // ---------------- Reporte: un resumen (el detalle completo va en el Excel) ----------------
+  async function pdf(c) {
+    const doc = await nuevoPdf(tituloReporte(c), mayuscula(c.periodoTexto),
+      `Generado el ${fechaHora.format(c.generadoEn)} por ${c.generadoPor}`);
+    const ancho = doc.internal.pageSize.getWidth();
+
+    // Indicadores
     const agotados = c.porAgotarse.filter((p) => p.cantidad <= 0).length;
     const tarjetas = [
       ['Total vendido', cop.format(c.totalCOP), c.totalUSD != null ? `aprox. ${usd.format(c.totalUSD)}` : ''],
       ['Ventas', num.format(c.numVentas), c.numAnuladas ? plural(c.numAnuladas, 'línea anulada', 'líneas anuladas') : 'Ninguna anulada'],
       ['Unidades vendidas', num.format(c.unidades), `De ${plural(c.porProducto.length, 'producto', 'productos')}`],
-      ['Por agotarse', num.format(c.porAgotarse.length), agotados ? `${plural(agotados, 'agotado', 'agotados')}` : 'Ninguno agotado'],
+      ['Por agotarse', num.format(c.porAgotarse.length), agotados ? plural(agotados, 'agotado', 'agotados') : 'Ninguno agotado'],
     ];
     const espacio = 10;
-    const anchoTarjeta = (ancho - margen * 2 - espacio * 3) / 4;
+    const anchoTarjeta = (ancho - MARGEN * 2 - espacio * 3) / 4;
     tarjetas.forEach(([etiqueta, valor, nota], i) => {
-      const x = margen + i * (anchoTarjeta + espacio);
-      const y = 112;
+      const x = MARGEN + i * (anchoTarjeta + espacio);
       const principal = i === 0;
       doc.setDrawColor(...rgb(principal ? COLOR.primario : COLOR.borde));
       doc.setFillColor(...rgb(principal ? COLOR.primarioClaro : 'FFFFFF'));
       doc.setLineWidth(principal ? 1.2 : 0.8);
-      doc.roundedRect(x, y, anchoTarjeta, 66, 6, 6, 'FD');
+      doc.roundedRect(x, 112, anchoTarjeta, 62, 6, 6, 'FD');
       doc.setTextColor(...rgb(COLOR.gris));
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8.5);
-      doc.text(etiqueta, x + 10, y + 17);
+      doc.text(etiqueta, x + 10, 128);
       doc.setTextColor(...rgb(COLOR.texto));
       doc.setFont('helvetica', 'bold');
-      doc.setFontSize(principal ? 16 : 15);
-      doc.text(limpio(valor), x + 10, y + 40);
+      doc.setFontSize(15);
+      doc.text(limpio(valor), x + 10, 150);
       doc.setTextColor(...rgb(COLOR.gris));
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
-      doc.text(limpio(nota), x + 10, y + 56);
+      doc.text(limpio(nota), x + 10, 165);
     });
 
-    // ---- Tablas ----
-    let y = 202;
-    const estiloBase = {
-      theme: 'grid',
-      rowPageBreak: 'avoid',   // una fila nunca queda partida entre dos páginas
-      margin: { left: margen, right: margen, bottom: 50 },
-      styles: { font: 'helvetica', fontSize: 9, cellPadding: 5, lineColor: rgb(COLOR.borde), lineWidth: 0.5, textColor: rgb(COLOR.texto) },
-      headStyles: { fillColor: rgb(COLOR.texto), textColor: 255, fontStyle: 'bold' },
-      alternateRowStyles: { fillColor: rgb(COLOR.grisClaro) },
-      footStyles: { fillColor: rgb(COLOR.primarioClaro), textColor: rgb(COLOR.texto), fontStyle: 'bold' },
-    };
+    const w = escritor(doc, 196);
 
-    function titulo(texto, nota) {
-      if (y > doc.internal.pageSize.getHeight() - 120) { doc.addPage(); y = 50; }
-      doc.setTextColor(...rgb(COLOR.texto));
-      doc.setFont('helvetica', 'bold');
-      doc.setFontSize(12.5);
-      doc.text(texto, margen, y);
-      if (nota) {
-        doc.setFont('helvetica', 'normal');
-        doc.setFontSize(8.5);
-        doc.setTextColor(...rgb(COLOR.gris));
-        doc.text(nota, margen, y + 13);
-        y += 13;
-      }
-      y += 8;
-    }
+    // Lo demás del periodo, en una sola fila
+    w.tabla({
+      head: [['Entradas de mercancía', 'Salidas de mercancía', 'Anulaciones', 'Cambios de precio']],
+      body: [[
+        plural(unidadesDe(c, ['entrada']), 'unidad', 'unidades'),
+        plural(unidadesDe(c, ['salida']), 'unidad', 'unidades'),
+        plural(c.numAnuladas, 'línea', 'líneas'),
+        plural(c.cambiosPrecio.length, 'cambio', 'cambios'),
+      ]],
+      headStyles: { ...estiloTabla.headStyles, fillColor: rgb(COLOR.grisClaro), textColor: rgb(COLOR.gris), fontStyle: 'normal', fontSize: 8 },
+      styles: { ...estiloTabla.styles, fontSize: 9.5, fontStyle: 'bold', halign: 'center' },
+    });
 
-    function sinDatos(texto) {
-      doc.setFont('helvetica', 'italic');
-      doc.setFontSize(9.5);
-      doc.setTextColor(...rgb(COLOR.gris));
-      doc.text(texto, margen, y + 12);
-      y += 34;
-    }
-
-    const derecha = { halign: 'right' };
-
-    if (!c.unDia) {
-      titulo('Ventas por día');
-      if (c.porDia.length) {
-        doc.autoTable({
-          ...estiloBase, startY: y,
-          head: [['Día', 'Ventas', 'Unidades', 'Total']],
-          body: c.porDia.map((d) => [mayuscula(diaLargo.format(new Date(`${d.fecha}T00:00:00Z`))), num.format(d.ventas), num.format(d.unidades), limpio(cop.format(d.total))]),
-          foot: [['TOTAL', num.format(c.numVentas), num.format(c.unidades), limpio(cop.format(c.totalCOP))]],
-          columnStyles: { 1: { cellWidth: 58 }, 2: { cellWidth: 58 }, 3: { cellWidth: 90 } },
-          didParseCell: (d) => { if (d.column.index > 0) d.cell.styles.halign = 'right'; },
-        });
-        y = doc.lastAutoTable.finalY + 26;
-      } else {
-        sinDatos('No hubo ventas en este periodo.');
-      }
-    }
-
-    titulo('Productos más vendidos');
-    if (c.porProducto.length) {
-      doc.autoTable({
-        ...estiloBase, startY: y,
-        head: [['Código', 'Producto', 'Unidades', 'Total', '% del total']],
-        body: c.porProducto.map((p) => [p.codigo || '-', p.nombre, num.format(p.unidades), limpio(cop.format(p.total)),
-          `${porcentaje.format(c.totalCOP ? (p.total / c.totalCOP) * 100 : 0)} %`]),
-        foot: [['', 'TOTAL', num.format(c.unidades), limpio(cop.format(c.totalCOP)), '100,0 %']],
-        columnStyles: { 0: { cellWidth: 62 }, 2: { ...derecha, cellWidth: 58 }, 3: { ...derecha, cellWidth: 82 }, 4: { ...derecha, cellWidth: 62 } },
-        didParseCell: (d) => { if ([2, 3, 4].includes(d.column.index)) d.cell.styles.halign = 'right'; },
-      });
-      y = doc.lastAutoTable.finalY + 26;
-    } else {
-      sinDatos('No hubo ventas en este periodo.');
-    }
-
-    titulo('Ventas por vendedor');
+    w.titulo('Ventas por vendedor');
     if (c.porVendedor.length) {
-      doc.autoTable({
-        ...estiloBase, startY: y,
+      w.tabla({
         head: [['Vendedor', 'Ventas', 'Unidades', 'Total', '% del total']],
         body: c.porVendedor.map((v) => [v.vendedor, num.format(v.ventas), num.format(v.unidades), limpio(cop.format(v.total)),
           `${porcentaje.format(c.totalCOP ? (v.total / c.totalCOP) * 100 : 0)} %`]),
         foot: [['TOTAL', num.format(c.numVentas), num.format(c.unidades), limpio(cop.format(c.totalCOP)), '100,0 %']],
-        columnStyles: { 1: { cellWidth: 58 }, 2: { cellWidth: 58 }, 3: { cellWidth: 82 }, 4: { cellWidth: 62 } },
+        columnStyles: { 1: { cellWidth: 55 }, 2: { cellWidth: 60 }, 3: { cellWidth: 85 }, 4: { cellWidth: 60 } },
         didParseCell: (d) => { if (d.column.index > 0) d.cell.styles.halign = 'right'; },
       });
-      y = doc.lastAutoTable.finalY + 26;
     } else {
-      sinDatos('No hubo ventas en este periodo.');
+      w.nota('No hubo ventas en este periodo.');
     }
 
-    titulo('Detalle de ventas', c.numAnuladas ? 'Las ventas anuladas aparecen en gris, marcadas (ANULADA), y no suman en los totales.' : null);
-    if (c.ventas.length) {
-      const ordenadas = [...c.ventas].sort((a, b) => a.vendido_en.localeCompare(b.vendido_en));
-      doc.autoTable({
-        ...estiloBase, startY: y,
-        head: [['N.º', c.unDia ? 'Hora' : 'Fecha', 'Código', 'Producto', 'Cant.', 'Precio unit.', 'Total', 'Vendedor']],
-        body: ordenadas.map((v) => [v.ticket ? '#' + v.ticket : '-', cuando(c, v.vendido_en), v.codigo || '-',
-          v.anulada_en ? `${v.nombre}  (ANULADA)` : v.nombre, num.format(v.cantidad),
-          limpio(cop.format(v.precio_unitario)), limpio(cop.format(v.total)), v.vendedor || '-']),
-        foot: [['', '', '', 'TOTAL', num.format(c.unidades), '', limpio(cop.format(c.totalCOP)), '']],
-        columnStyles: { 0: { cellWidth: 34 }, 1: { cellWidth: c.unDia ? 58 : 92 }, 2: { cellWidth: 50 }, 4: { cellWidth: 32 }, 5: { cellWidth: 64 }, 6: { cellWidth: 68 }, 7: { cellWidth: 52 } },
-        didParseCell: (d) => {
-          if ([4, 5, 6].includes(d.column.index)) d.cell.styles.halign = 'right';
-          if (d.section === 'body' && ordenadas[d.row.index].anulada_en) {
-            d.cell.styles.textColor = rgb(COLOR.gris);
-            d.cell.styles.fontStyle = 'italic';
-          }
-        },
+    if (!c.unDia && c.porDia.length) {
+      w.titulo('Ventas por día');
+      w.tabla({
+        head: [['Día', 'Ventas', 'Unidades', 'Total']],
+        body: c.porDia.map((d) => [mayuscula(diaLargo.format(new Date(`${d.fecha}T00:00:00Z`))), num.format(d.ventas), num.format(d.unidades), limpio(cop.format(d.total))]),
+        foot: [['TOTAL', num.format(c.numVentas), num.format(c.unidades), limpio(cop.format(c.totalCOP))]],
+        columnStyles: { 1: { cellWidth: 55 }, 2: { cellWidth: 60 }, 3: { cellWidth: 85 } },
+        didParseCell: (d) => { if (d.column.index > 0) d.cell.styles.halign = 'right'; },
       });
-      y = doc.lastAutoTable.finalY + 26;
-    } else {
-      sinDatos('No hubo ventas en este periodo.');
     }
 
-    titulo('Entradas y salidas de mercancía', 'Autorizadas con la clave del jefe');
-    if (c.movimientos.length) {
-      const movs = [...c.movimientos].sort((a, b) => a.creado_en.localeCompare(b.creado_en));
-      doc.autoTable({
-        ...estiloBase, startY: y,
-        head: [['Hora', 'Código', 'Producto', 'Tipo', 'Cant.', 'Había', 'Quedó', 'Motivo']],
-        body: movs.map((m) => [cuando(c, m.creado_en), m.codigo || '-', m.nombre, TIPO_MOVIMIENTO[m.tipo],
-          `${m.tipo === 'salida' ? '-' : '+'}${num.format(m.cantidad)}`, m.stock_antes ?? '-', m.stock_despues ?? '-',
-          m.tipo === 'anulacion' ? 'Venta anulada' : m.motivo]),
-        columnStyles: { 0: { cellWidth: c.unDia ? 64 : 92 }, 1: { cellWidth: 52 }, 3: { cellWidth: 62 }, 4: { cellWidth: 36 }, 5: { cellWidth: 38 }, 6: { cellWidth: 38 }, 7: { cellWidth: 92 } },
-        didParseCell: (d) => {
-          if ([4, 5, 6].includes(d.column.index)) d.cell.styles.halign = 'right';
-          if (d.section === 'body' && d.column.index === 4) {
-            d.cell.styles.fontStyle = 'bold';
-            d.cell.styles.textColor = rgb(movs[d.row.index].tipo === 'salida' ? COLOR.rojo : '166534');
-          }
-        },
+    if (c.porProducto.length) {
+      const top = c.porProducto.slice(0, MAX_FILAS_RESUMEN);
+      const resto = c.porProducto.length - top.length;
+      w.titulo(c.porProducto.length > MAX_FILAS_RESUMEN ? `Los ${MAX_FILAS_RESUMEN} productos más vendidos` : 'Productos más vendidos',
+        resto ? `y ${plural(resto, 'producto más', 'productos más')} (ver el Excel)` : null);
+      w.tabla({
+        head: [['Código', 'Producto', 'Unidades', 'Total', '% del total']],
+        body: top.map((p) => [p.codigo || '-', p.nombre, num.format(p.unidades), limpio(cop.format(p.total)),
+          `${porcentaje.format(c.totalCOP ? (p.total / c.totalCOP) * 100 : 0)} %`]),
+        columnStyles: { 0: { cellWidth: 58 }, 2: { cellWidth: 55 }, 3: { cellWidth: 80 }, 4: { cellWidth: 58 } },
+        didParseCell: (d) => { if ([2, 3, 4].includes(d.column.index)) d.cell.styles.halign = 'right'; },
       });
-      y = doc.lastAutoTable.finalY + 26;
-    } else {
-      sinDatos('No hubo entradas ni salidas en este periodo.');
     }
 
-    titulo('Cambios de precio', 'Quién cambió cada precio, cuándo y de cuánto a cuánto');
-    if (c.cambiosPrecio.length) {
-      const cambios = [...c.cambiosPrecio].sort((a, b) => a.creado_en.localeCompare(b.creado_en));
-      doc.autoTable({
-        ...estiloBase, startY: y,
-        head: [[c.unDia ? 'Hora' : 'Fecha', 'Código', 'Producto', 'Antes', 'Ahora', 'Por']],
-        body: cambios.map((h) => [cuando(c, h.creado_en), h.codigo || '-', h.nombre,
-          h.precio_anterior == null ? '-' : limpio(cop.format(h.precio_anterior)), limpio(cop.format(h.precio_nuevo)),
-          `${h.usuario || '-'}${h.origen === 'importacion' ? ' (Excel)' : ''}`]),
-        columnStyles: { 0: { cellWidth: c.unDia ? 58 : 92 }, 1: { cellWidth: 52 }, 3: { cellWidth: 70 }, 4: { cellWidth: 70, fontStyle: 'bold' }, 5: { cellWidth: 70 } },
-        didParseCell: (d) => { if ([3, 4].includes(d.column.index)) d.cell.styles.halign = 'right'; },
-      });
-      y = doc.lastAutoTable.finalY + 26;
-    } else {
-      sinDatos('No hubo cambios de precio en este periodo.');
-    }
-
-    titulo('Productos por agotarse', `Inventario actual con ${c.stockBajo} unidades o menos`);
     if (c.porAgotarse.length) {
-      doc.autoTable({
-        ...estiloBase, startY: y,
+      const top = c.porAgotarse.slice(0, MAX_FILAS_RESUMEN);
+      const resto = c.porAgotarse.length - top.length;
+      w.titulo('Productos por agotarse',
+        `Inventario actual con ${c.stockBajo} unidades o menos${resto ? ` · y ${plural(resto, 'producto más', 'productos más')} (ver el Excel)` : ''}`);
+      w.tabla({
         head: [['Código', 'Producto', 'Quedan', 'Estado']],
-        body: c.porAgotarse.map((p) => [p.codigo || '-', p.nombre, num.format(p.cantidad), p.cantidad <= 0 ? 'Agotado' : 'Pocas unidades']),
-        columnStyles: { 0: { cellWidth: 62 }, 2: { ...derecha, cellWidth: 52 }, 3: { cellWidth: 92 } },
+        body: top.map((p) => [p.codigo || '-', p.nombre, num.format(p.cantidad), p.cantidad <= 0 ? 'Agotado' : 'Pocas unidades']),
+        columnStyles: { 0: { cellWidth: 58 }, 2: { cellWidth: 50 }, 3: { cellWidth: 90 } },
         didParseCell: (d) => {
           if (d.column.index === 2) d.cell.styles.halign = 'right';
           if (d.section === 'body' && d.column.index === 3) {
-            const agotado = c.porAgotarse[d.row.index].cantidad <= 0;
+            const agotado = top[d.row.index].cantidad <= 0;
             d.cell.styles.fillColor = rgb(agotado ? COLOR.rojoClaro : COLOR.ambarClaro);
             d.cell.styles.textColor = rgb(agotado ? COLOR.rojo : COLOR.ambar);
             d.cell.styles.fontStyle = 'bold';
           }
         },
       });
-    } else {
-      sinDatos('Ningún producto está por agotarse.');
     }
 
-    // ---- Pie de página en todas las hojas ----
-    const paginas = doc.internal.getNumberOfPages();
-    const alto = doc.internal.pageSize.getHeight();
-    for (let i = 1; i <= paginas; i++) {
-      doc.setPage(i);
-      doc.setDrawColor(...rgb(COLOR.borde));
-      doc.setLineWidth(0.5);
-      doc.line(margen, alto - 32, ancho - margen, alto - 32);
-      doc.setFont('helvetica', 'normal');
-      doc.setFontSize(8);
-      doc.setTextColor(...rgb(COLOR.gris));
-      const pie = c.unDia ? c.desde.split('-').reverse().join('/') : `${c.desde.split('-').reverse().join('/')} a ${c.hasta.split('-').reverse().join('/')}`;
-      doc.text(`Sistema Mayor · ${tituloReporte(c)} ${pie}`, margen, alto - 18);
-      doc.text(`Página ${i} de ${paginas}`, ancho - margen, alto - 18, { align: 'right' });
-    }
+    w.nota('Este PDF es un resumen. El detalle de cada venta y de cada carrito, las entradas y salidas y los cambios de precio están en el Excel de este mismo reporte.');
 
+    const pie = c.unDia ? c.desde.split('-').reverse().join('/') : `${c.desde.split('-').reverse().join('/')} a ${c.hasta.split('-').reverse().join('/')}`;
+    piePaginas(doc, `Sistema Mayor · ${tituloReporte(c)} ${pie}`);
     doc.save(nombreArchivo(c, 'pdf'));
+  }
+
+  // ---------------- Una venta (carrito) ----------------
+  async function pdfVenta(v) {
+    const doc = await nuevoPdf(`Venta #${v.numero}`, mayuscula(fechaHora.format(new Date(v.vendido_en))),
+      `Vendedor: ${v.vendedor} · generado el ${fechaHora.format(v.generadoEn)} por ${v.generadoPor}`);
+    const w = escritor(doc, 120);
+    if (v.estado !== 'Completa') {
+      w.nota(v.estado === 'Anulada'
+        ? 'Esta venta fue anulada: las unidades volvieron al inventario.'
+        : 'Algunos productos de esta venta fueron anulados (en gris): no suman en el total.', false);
+    }
+    const hayAnuladas = v.lineas.some((l) => l.anulada_en);
+    w.tabla({
+      head: [['Código', 'Producto', 'Cant.', 'Precio unit.', 'Subtotal', ...(hayAnuladas ? ['Estado'] : [])]],
+      body: v.lineas.map((l) => [l.codigo || '-', l.nombre, num.format(l.cantidad), limpio(cop.format(l.precio_unitario)),
+        limpio(cop.format(l.total)), ...(hayAnuladas ? [l.anulada_en ? 'Anulada' : 'Vendida'] : [])]),
+      foot: [['', 'TOTAL', num.format(v.unidades), '', limpio(cop.format(v.total)), ...(hayAnuladas ? [''] : [])]],
+      styles: { ...estiloTabla.styles, fontSize: 9.5, cellPadding: 6 },
+      columnStyles: { 0: { cellWidth: 62 }, 2: { cellWidth: 40 }, 3: { cellWidth: 80 }, 4: { cellWidth: 85 } },
+      didParseCell: (d) => {
+        if ([2, 3, 4].includes(d.column.index)) d.cell.styles.halign = 'right';
+        if (d.section === 'body' && v.lineas[d.row.index].anulada_en) {
+          d.cell.styles.textColor = rgb(COLOR.gris);
+          d.cell.styles.fontStyle = 'italic';
+        }
+      },
+    });
+    const detalles = [];
+    if (v.totalUSD != null) detalles.push(`Equivale a aprox. ${usd.format(v.totalUSD)} (tasa de ese momento: 1 USD = ${cop.format(v.tasa)}).`);
+    if (v.anulado) detalles.push(`Anulado: ${cop.format(v.anulado)} (no suma en el total).`);
+    if (detalles.length) w.nota(detalles.join(' '), false);
+
+    piePaginas(doc, `Sistema Mayor · Venta #${v.numero}`);
+    doc.save(`Venta-${v.numero}.pdf`);
   }
 
   // ================================================================
@@ -789,5 +807,5 @@ window.Exportar = (function () {
     throw new Error('No encontré las columnas. La primera fila debe tener los títulos: Código, Nombre, Descripción, Cantidad, Precio.');
   }
 
-  return { excel, pdf, plantilla, leerProductos };
+  return { excel, pdf, pdfVenta, plantilla, leerProductos };
 })();

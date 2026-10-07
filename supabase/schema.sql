@@ -117,9 +117,41 @@ create table if not exists public.vendedores (
 alter table public.ventas add column if not exists vendedor_id bigint references public.vendedores (id) on delete set null;
 
 -- Número de venta: agrupa los productos que se cobraron juntos (carrito).
-create sequence if not exists public.ventas_ticket_seq;
+-- Los números son consecutivos y sin saltos (1, 2, 3…): salen de un contador
+-- que avanza dentro de la misma transacción de la venta, así que si la venta
+-- no se completa, el número no se gasta.
 alter table public.ventas add column if not exists ticket bigint;
 create index if not exists ventas_ticket on public.ventas (ticket);
+
+create table if not exists public.numeracion (
+  id           smallint primary key default 1 check (id = 1),
+  ultima_venta bigint not null default 0
+);
+insert into public.numeracion (id) values (1) on conflict (id) do nothing;
+
+-- Una sola vez (cuando el contador aún está en 0): numerar en orden de fecha
+-- todas las ventas existentes, incluidas las que no tenían número.
+do $$
+begin
+  if (select ultima_venta from public.numeracion where id = 1) = 0 then
+    with grupos as (
+      select coalesce(ticket::text, 'L' || id) as grupo, min(vendido_en) as inicio, min(id) as primer_id
+      from public.ventas
+      group by 1
+    ), numerados as (
+      select grupo, row_number() over (order by inicio, primer_id) as numero from grupos
+    )
+    update public.ventas v set ticket = n.numero
+    from numerados n
+    where n.grupo = coalesce(v.ticket::text, 'L' || v.id);
+
+    update public.numeracion set ultima_venta = (select coalesce(max(ticket), 0) from public.ventas) where id = 1;
+  end if;
+end
+$$;
+
+alter table public.ventas alter column ticket set not null;
+drop sequence if exists public.ventas_ticket_seq;   -- versión anterior (dejaba saltos)
 
 -- Historial de todo lo que mueve el inventario: ventas, anulaciones,
 -- entradas y salidas autorizadas con la clave del jefe.
@@ -403,7 +435,7 @@ begin
   end loop;
 
   -- 2) Registrar cada línea con el mismo número de venta.
-  v_ticket := nextval('public.ventas_ticket_seq');
+  update public.numeracion set ultima_venta = ultima_venta + 1 where id = 1 returning ultima_venta into v_ticket;
   v_tasa := (select tasa_usd from public.configuracion where id = 1);
   for v_item in
     select producto_id, sum(cantidad)::integer as cantidad
@@ -918,8 +950,8 @@ $$;
 -- ---------------------------------------------------------------------
 
 revoke all on public.perfiles, public.productos, public.configuracion, public.ventas,
-              public.seguridad, public.vendedores, public.movimientos, public.historial_precios from anon, authenticated;
-revoke all on sequence public.ventas_ticket_seq from anon, authenticated;
+              public.seguridad, public.vendedores, public.movimientos, public.historial_precios,
+              public.numeracion from anon, authenticated;
 
 grant select on public.perfiles to authenticated;
 -- Los productos no se escriben directamente: se crean y editan con guardar_producto
@@ -977,6 +1009,7 @@ alter table public.configuracion enable row level security;
 alter table public.ventas        enable row level security;
 alter table public.movimientos   enable row level security;
 alter table public.historial_precios enable row level security;
+alter table public.numeracion    enable row level security;   -- sin políticas: solo la usa registrar_venta_multiple
 alter table public.seguridad     enable row level security;   -- sin políticas: nadie la lee
 alter table public.vendedores    enable row level security;   -- sin políticas: nadie la lee
 

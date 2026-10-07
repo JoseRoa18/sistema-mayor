@@ -1039,6 +1039,19 @@
       }
     }
     const conVentas = (g) => ({ ...g, ventas: g.tickets.size, tickets: undefined });
+
+    // Un renglón por venta (carrito), incluidas las anuladas.
+    const porCarrito = new Map();
+    for (const v of ventas) {
+      const g = porCarrito.get(numeroVenta(v))
+        || { ticket: v.ticket, vendido_en: v.vendido_en, vendedor: v.vendedor || '—', lineas: 0, anuladas: 0, unidades: 0, total: 0 };
+      g.lineas += 1;
+      if (v.anulada_en) g.anuladas += 1;
+      else { g.unidades += v.cantidad; g.total += Number(v.total); }
+      if (v.vendido_en < g.vendido_en) g.vendido_en = v.vendido_en;
+      porCarrito.set(numeroVenta(v), g);
+    }
+    const estadoCarrito = (g) => (g.anuladas === g.lineas ? 'Anulada' : g.anuladas ? 'Anulación parcial' : 'Completa');
     const totalCOP = validas.reduce((s, v) => s + Number(v.total), 0);
     const conTasa = validas.filter((v) => v.tasa_usd);
     const unDia = desde === hasta;
@@ -1066,6 +1079,8 @@
       porProducto: [...porProducto.values()].sort((a, b) => b.unidades - a.unidades || b.total - a.total),
       porVendedor: [...porVendedor.values()].map(conVentas).sort((a, b) => b.total - a.total),
       porDia: [...porDia.values()].map(conVentas).sort((a, b) => a.fecha.localeCompare(b.fecha)),
+      porCarrito: [...porCarrito.values()].map((g) => ({ ...g, estado: estadoCarrito(g) }))
+        .sort((a, b) => (b.ticket ?? 0) - (a.ticket ?? 0) || b.vendido_en.localeCompare(a.vendido_en)),
       movimientos,      // entradas, salidas y anulaciones (las ventas ya están arriba)
       cambiosPrecio,
       porAgotarse,
@@ -1177,8 +1192,19 @@
     )));
     $('#vacio-agotarse').hidden = c.porAgotarse.length > 0;
 
+    $('#tabla-carritos').replaceChildren(...c.porCarrito.map((g) => el('tr', { class: `fila-clic${g.estado === 'Anulada' ? ' anulada' : ''}`, onclick: () => abrirVentaNumero(g.ticket) },
+      celda(botonVenta(g.ticket), 'nowrap'),
+      celda(cuando(g.vendido_en), 'nowrap'),
+      celda(g.vendedor),
+      celda(fmtNumero.format(g.lineas), 'num'),
+      celda(fmtNumero.format(g.unidades), 'num'),
+      celda(fmtCOP.format(g.total), 'num'),
+      celda(g.estado === 'Completa' ? 'Completa' : el('span', { class: 'etiqueta-anulada' }, g.estado)),
+    )));
+    $('#vacio-carritos').hidden = c.porCarrito.length > 0;
+
     $('#tabla-ventas').replaceChildren(...c.ventas.map((v) => el('tr', v.anulada_en ? { class: 'anulada' } : {},
-      celda(v.ticket ? `#${v.ticket}` : '—', 'nowrap'),
+      celda(botonVenta(v.ticket, true), 'nowrap'),
       celda(cuando(v.vendido_en), 'nowrap'),
       celda(v.codigo ? el('span', { class: 'codigo codigo-sm' }, v.codigo) : '—'),
       celda(v.nombre),
@@ -1192,6 +1218,89 @@
     )));
     $('#vacio-ventas').hidden = c.ventas.length > 0;
   }
+
+  // ------------------------------------------------------------------
+  // Reporte de una venta (carrito) por su número
+  // ------------------------------------------------------------------
+
+  let ventaAbierta = null;   // la venta que se está viendo (también para su PDF)
+
+  // El número de venta como botón: abre su detalle. En el detalle de líneas tiene
+  // su propio clic; en la tabla de carritos el clic lo maneja la fila completa.
+  function botonVenta(numero, propio) {
+    if (!numero) return '—';
+    return el('button', {
+      type: 'button', class: 'enlace-venta', title: `Ver la venta #${numero}`,
+      ...(propio ? { onclick: () => abrirVentaNumero(numero) } : {}),
+    }, `#${numero}`);
+  }
+
+  async function abrirVentaNumero(numero) {
+    const { data, error } = await db.from('ventas').select('*').eq('ticket', numero).order('id');
+    if (error) { toast(`No se pudo cargar la venta: ${error.message}`, 'error'); return; }
+    if (!data.length) { toast(`No existe la venta #${numero}.`, 'error'); return; }
+
+    const validas = data.filter((l) => !l.anulada_en);
+    const tasa = data.find((l) => l.tasa_usd)?.tasa_usd;
+    const total = validas.reduce((s, l) => s + Number(l.total), 0);
+    ventaAbierta = {
+      numero,
+      lineas: data,
+      vendido_en: data[0].vendido_en,
+      vendedor: data[0].vendedor || '—',
+      unidades: validas.reduce((s, l) => s + l.cantidad, 0),
+      total,
+      anulado: data.filter((l) => l.anulada_en).reduce((s, l) => s + Number(l.total), 0),
+      tasa: tasa ? Number(tasa) : null,
+      totalUSD: tasa ? total / Number(tasa) : null,
+      estado: validas.length === 0 ? 'Anulada' : validas.length < data.length ? 'Anulación parcial' : 'Completa',
+      generadoEn: new Date(),
+      generadoPor: $('#usuario-nombre').textContent,
+    };
+    pintarVenta(ventaAbierta);
+    if (!$('#dlg-venta').open) $('#dlg-venta').showModal();
+  }
+
+  function pintarVenta(v) {
+    $('#venta-titulo').textContent = `Venta #${v.numero}`;
+    const n = v.lineas.length;
+    $('#venta-meta').textContent = `${fmtFecha.format(new Date(v.vendido_en))} · vendedor: ${v.vendedor} · ${n} ${n === 1 ? 'producto' : 'productos'}`;
+    $('#venta-estado').hidden = v.estado === 'Completa';
+    $('#venta-estado').textContent = v.estado;
+    $('#venta-lineas').replaceChildren(...v.lineas.map((l) => el('tr', l.anulada_en ? { class: 'anulada' } : {},
+      celda(l.codigo ? el('span', { class: 'codigo codigo-sm' }, l.codigo) : '—'),
+      celda(l.nombre),
+      celda(fmtNumero.format(l.cantidad), 'num'),
+      celda(fmtCOP.format(l.precio_unitario), 'num'),
+      celda(fmtCOP.format(l.total), 'num'),
+      celda(l.anulada_en ? el('span', { class: 'etiqueta-anulada' }, 'Anulada') : 'Vendida'),
+    )));
+    $('#venta-total').textContent = fmtCOP.format(v.total);
+    $('#venta-total-usd').textContent = v.totalUSD != null
+      ? `≈ ${fmtUSD.format(v.totalUSD)} (tasa de ese momento: ${fmtCOP.format(v.tasa)})` : '';
+    $('#venta-anulado').hidden = !v.anulado;
+    $('#venta-anulado').textContent = v.anulado ? `Anulado: ${fmtCOP.format(v.anulado)} (no suma en el total)` : '';
+  }
+
+  $('#form-buscar-venta').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const numero = Number(e.currentTarget.numero.value);
+    if (!Number.isInteger(numero) || numero < 1) { toast('Escribe un número de venta válido.', 'error'); return; }
+    abrirVentaNumero(numero);
+  });
+
+  $('#btn-venta-pdf').addEventListener('click', async (e) => {
+    if (!ventaAbierta) return;
+    const boton = e.currentTarget;
+    boton.disabled = true;
+    try {
+      await window.Exportar.pdfVenta(ventaAbierta);
+    } catch (error) {
+      toast(`No se pudo generar el PDF: ${error.message}`, 'error');
+    } finally {
+      boton.disabled = false;
+    }
+  });
 
   function abrirAnular(v) {
     ventaAnulando = v;

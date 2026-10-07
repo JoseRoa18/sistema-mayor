@@ -46,10 +46,11 @@ aunque alguien intente hacer algo que su rol no permite, la base de datos lo rec
 
 ```
 index.html            Página única (login + aplicación)
-css/styles.css        Estilos (modo claro/oscuro automático, adaptado a celular)
+css/styles.css        Estilos (tema claro y oscuro, adaptado a celular)
 js/config.js          URL y clave pública (anon) de Supabase
 js/app.js             Lógica de la aplicación
-js/exportar.js        Descargas del cierre en Excel y PDF
+js/tema.js            Tema claro / oscuro / automático
+js/exportar.js        Reportes en Excel y PDF, PDF de cada venta, plantilla e importación de Excel
 supabase/schema.sql   Tablas, permisos, búsqueda, ventas y clave del jefe
 ```
 
@@ -94,6 +95,9 @@ y se **descuenta del inventario automáticamente**.
 La venta se registra completa o no se registra: si a un producto le faltan unidades (por
 ejemplo, otro vendedor se llevó la última), no se vende nada y el carrito se ajusta a lo que
 hay. Nunca se vende más de lo disponible.
+
+Los números de venta son **consecutivos y sin saltos** (#1, #2, #3…): una venta que no se
+completa no gasta número.
 
 ### Entradas y salidas de mercancía
 
@@ -144,14 +148,28 @@ o un periodo **personalizado** (desde – hasta). Las semanas empiezan el lunes.
 - Total vendido en pesos (y su equivalente en dólares con la tasa de cada venta),
   número de ventas (cada carrito cuenta como una), unidades vendidas y productos por agotarse.
 - Ventas por día (cuando el periodo tiene varios días), productos más vendidos, ventas por
-  vendedor, entradas y salidas, cambios de precio, detalle de cada venta (n.º, fecha/hora,
-  producto, cantidad, vendedor) y productos con 5 unidades o menos (`STOCK_BAJO` en `js/config.js`).
+  vendedor, entradas y salidas, cambios de precio, **ventas por carrito**, detalle de cada línea
+  vendida y productos con 5 unidades o menos (`STOCK_BAJO` en `js/config.js`).
+- **Reporte por carrito**: una fila por venta (número, fecha, vendedor, productos, unidades,
+  total y si fue anulada). Al tocar una venta, o al buscarla por su número con **Ver venta**,
+  se abre su detalle completo con el total en pesos y en dólares (con la tasa de ese momento)
+  y se puede **descargar en PDF**.
 - **Anular** una línea de venta equivocada (con la clave del jefe): las unidades vuelven al
   inventario y queda marcada como anulada (no se borra).
-- **Descargar Excel** (Resumen, Ventas, Por día, Por producto, Por vendedor, Entradas y salidas,
-  Cambios de precio, Por agotarse e Inventario) o **Descargar PDF** (listo para imprimir).
+- **Descargar PDF**: un **resumen** de una página para un día normal (indicadores, entradas,
+  salidas, anulaciones y cambios de precio, ventas por vendedor y por día, los 10 productos más
+  vendidos y los 10 por agotarse).
+- **Descargar Excel**: todo el detalle (Resumen, Ventas, Por carrito, Por día, Por producto,
+  Por vendedor, Entradas y salidas, Cambios de precio, Por agotarse e Inventario).
 
 Mientras el periodo incluya el día de hoy, los datos se actualizan solos cada minuto.
+
+### Tema claro y oscuro
+
+El botón de sol/luna (arriba, y también en la pantalla de inicio de sesión) permite elegir
+**Claro**, **Oscuro** o **Automático** (sigue el modo del equipo y cambia solo si el equipo
+cambia). Cada equipo recuerda su elección. Los colores de ambos temas cumplen el contraste
+mínimo recomendado para leer bien (WCAG AA).
 
 ### Zona horaria
 
@@ -207,6 +225,7 @@ Se puede ejecutar en *SQL Editor* en un proyecto nuevo, y es seguro volver a eje
 | `productos`     | Código (único), nombre, descripción, cantidad y precio en COP    |
 | `configuracion` | Tasa del dólar (pesos por 1 USD), cuándo y quién la cambió       |
 | `ventas`        | Cada línea vendida: n.º de venta, producto, cantidad, precio, tasa, vendedor, hora y si fue anulada |
+| `numeracion`    | Último número de venta usado (para que sean consecutivos y sin saltos) |
 | `historial_precios` | Cada cambio de precio: antes, después, quién, cuándo y si fue por Excel |
 | `movimientos`   | Historial de todo lo que mueve el inventario (ventas, anulaciones, entradas, salidas) |
 | `vendedores`    | Nombre y código cifrado de cada vendedor (nadie lo puede leer)   |
