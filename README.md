@@ -11,6 +11,8 @@ Precios en **pesos colombianos (COP)** con su equivalente en **dólares (USD)** 
 | Ver código, nombre, descripción, cantidad, precio COP y USD | ✅   | ✅            | ✅                  |
 | Vender con carrito (con el **código del vendedor**) | ✅            | ✅            | ✅                  |
 | Descargar la **lista de precios** en PDF           | ✅            | ✅            | ✅                  |
+| **Imprimir el ticket** de la venta en la impresora Bluetooth | ✅  | ✅            | ✅                  |
+| Reimprimir el ticket de cualquier venta (desde Reportes) | ✅       | ✅            | ❌                  |
 | **Cerrar el día** (con el código de una persona autorizada) | ✅   | ✅            | ✅                  |
 | **Administración**: ver los tickets de hoy (sin dinero) y anular un ticket | ❌ | ❌ | Con la **clave del jefe** |
 | Crear y editar productos (código, nombre, descripción) | ✅      | ✅            | ❌                  |
@@ -59,6 +61,7 @@ js/app.js             Lógica de la aplicación
 js/tema.js            Tema claro / oscuro / automático
 js/exportar.js        Reportes en Excel y PDF (resumen y detallado), PDF de cada venta,
                       lista de precios, plantilla e importación de Excel
+js/impresora.js       Tickets en la mini impresora térmica Bluetooth ("gatito")
 supabase/schema.sql   Tablas, permisos, búsqueda, ventas, cierres y clave del jefe
 ```
 
@@ -125,6 +128,33 @@ hay. Nunca se vende más de lo disponible.
 **Numeración:** cada día las ventas empiezan en **#1** (#1, #2, #3… del día). Además, cada venta
 tiene un **consecutivo** interno que nunca se reinicia ni salta números (una venta que no se
 completa no gasta número). Los tickets, reportes y PDF muestran los dos.
+
+### Impresora de tickets (mini impresora térmica Bluetooth "gatito")
+
+Después de cada venta se imprime un ticket de 57 mm con: **número del ticket** (el del día) y
+consecutivo, **fecha y hora**, el **código de cada producto en grande** con su cantidad, el
+nombre del producto recortado a dos renglones, el **total** y el **vendedor**.
+
+**Conectarla (una vez por equipo):** encender la impresora, tocar el botón de la impresora en la
+barra de arriba y luego **Conectar impresora**; aparece en la lista con un nombre como GB02,
+MX06 o MXW01. Si no aparece, **Ver todos los equipos Bluetooth**. Con **Imprimir prueba** se
+comprueba que todo sale bien.
+
+- Con la impresora conectada, el ticket sale **solo** al registrar cada venta (se puede apagar en
+  el mismo botón). Si se apaga y se vuelve a encender, el sistema la reconecta solo.
+- Si no hay impresora, el aviso de la venta trae el botón **Imprimir ticket**.
+- **Reimprimir último ticket** (en el botón de la impresora) y, para administración y el jefe,
+  **Imprimir ticket** en el detalle de cualquier venta en Reportes. Las reimpresiones dicen
+  "REIMPRESIÓN" al final.
+- **Intensidad** (clara, normal u oscura) y **modo compatible** (más lento, por si el ticket sale
+  cortado o con rayas). Se guardan en cada equipo.
+
+Funciona con **Google Chrome** (o Edge) en Android o en el computador, que pueden usar Bluetooth
+desde una página web. En **iPhone** no se puede: ahí **Guardar o compartir imagen** manda la
+imagen del ticket a la app de la impresora para imprimirla desde allí.
+
+Modelos: los "gatito" clásicos (GB01, GB02, GB03, MX05, MX06, MX08, MX10, YT01, X6…) y la versión
+nueva MXW01. La impresora se elige con el nombre que muestra en Bluetooth.
 
 ### Cierre del día
 

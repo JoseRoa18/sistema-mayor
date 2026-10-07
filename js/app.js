@@ -85,13 +85,27 @@
   }
 
   let temporizadorToast;
-  function toast(mensaje, tipo = 'ok') {
+  // Aviso flotante. Puede llevar un botón (accion = { texto, alHacer }), por ejemplo "Imprimir ticket".
+  function toast(mensaje, tipo = 'ok', accion = null) {
     const nodo = $('#toast');
-    nodo.textContent = mensaje;
+    nodo.replaceChildren(el('span', {}, mensaje), accion
+      ? el('button', { type: 'button', class: 'toast-accion', onclick: () => { ocultarToast(); accion.alHacer(); } }, accion.texto)
+      : null);
     nodo.dataset.tipo = tipo;
     nodo.hidden = false;
+    // En la capa superior: así se ve también encima de un diálogo abierto.
+    if (nodo.showPopover) {
+      try { nodo.hidePopover(); } catch { /* no estaba visible */ }
+      nodo.showPopover();
+    }
     clearTimeout(temporizadorToast);
-    temporizadorToast = setTimeout(() => { nodo.hidden = true; }, 3500);
+    temporizadorToast = setTimeout(ocultarToast, accion ? 10000 : 3500);
+  }
+
+  function ocultarToast() {
+    const nodo = $('#toast');
+    nodo.hidden = true;
+    try { nodo.hidePopover?.(); } catch { /* ya estaba oculto */ }
   }
 
   async function conBotonOcupado(form, accion) {
@@ -671,6 +685,7 @@
     }
 
     conBotonOcupado(form, async () => {
+      const carrito = new Map(estado.carrito);   // copia: el ticket usa sus códigos y nombres
       const items = [...estado.carrito.values()].map((l) => ({ producto_id: l.producto.id, cantidad: l.cantidad }));
       const r = await llamar('registrar_venta_multiple', { p_items: items, p_codigo_vendedor: form.vendedor.value.trim() });
       if (!r.ok) {
@@ -695,7 +710,7 @@
       form.vendedor.value = '';
       $('#dlg-carrito').close();
       const n = r.lineas.length;
-      toast(`Venta #${r.numero_dia} del día registrada (${r.vendedor}): ${n} ${n === 1 ? 'producto' : 'productos'} · ${fmtCOP.format(r.total)} · consecutivo ${r.ticket}`);
+      despuesDeVender(r, carrito, `Venta #${r.numero_dia} del día registrada (${r.vendedor}): ${n} ${n === 1 ? 'producto' : 'productos'} · ${fmtCOP.format(r.total)} · consecutivo ${r.ticket}`);
       vaciarCarrito();
       buscar(estado.busqueda);
       if (!$('#seccion-cierre').hidden) cargarCierre();
@@ -703,6 +718,202 @@
       $('#buscar').focus();
       $('#buscar').select();
     });
+  });
+
+  // ------------------------------------------------------------------
+  // Impresora de tickets (mini impresora térmica Bluetooth): ver js/impresora.js
+  // ------------------------------------------------------------------
+
+  const Impresora = window.Impresora;
+  let ultimoTicket = null;   // el último ticket vendido en este equipo (para reimprimirlo)
+  let ticketVista = null;    // el que se ve en la vista previa del diálogo
+
+  const ticketDePrueba = () => ({
+    prueba: true, numeroDia: 1, consecutivo: null, fecha: new Date().toISOString(),
+    lineas: [
+      { codigo: 'L-2054', nombre: 'CAMISA LAVADORA MABE FLOTADOR ALADO', cantidad: 2 },
+      { codigo: 'V-3013', nombre: 'CUCHILLA LICUADORA OSTER ORIGINAL + CUADRANTE', cantidad: 1 },
+    ],
+    total: 176000, vendedor: 'Prueba',
+  });
+
+  // Ticket a partir de lo que devuelve la venta (el carrito completa lo que falte).
+  function ticketDeVenta(r, carrito) {
+    return {
+      numeroDia: r.numero_dia,
+      consecutivo: r.ticket,
+      fecha: r.lineas[0]?.vendido_en || new Date().toISOString(),
+      lineas: r.lineas.map((l) => {
+        const p = carrito.get(l.producto_id)?.producto || {};
+        return { codigo: l.codigo ?? p.codigo, nombre: l.nombre ?? p.nombre, cantidad: l.cantidad };
+      }),
+      total: r.total,
+      vendedor: r.vendedor,
+    };
+  }
+
+  // Ticket de una venta ya registrada (reimpresión desde Reportes): solo lo que sigue vendido.
+  function ticketDeVentaAbierta(v) {
+    const vigentes = v.lineas.filter((l) => !l.anulada_en);
+    return {
+      numeroDia: v.numero_dia ?? v.numero,
+      consecutivo: v.numero,
+      fecha: v.vendido_en,
+      lineas: vigentes.map((l) => ({ codigo: l.codigo, nombre: l.nombre, cantidad: l.cantidad })),
+      total: v.total,
+      vendedor: v.vendedor,
+      reimpresion: true,
+    };
+  }
+
+  function pintarBotonImpresora(e = Impresora.estado()) {
+    const boton = $('#btn-impresora');
+    boton.classList.toggle('conectada', e.conectada);
+    boton.classList.toggle('ocupada', e.ocupada);
+    const texto = e.ocupada ? 'imprimiendo' : e.conectada ? `conectada (${e.nombre})` : 'sin conectar';
+    boton.setAttribute('aria-label', `Impresora de tickets: ${texto}`);
+    boton.title = `Impresora de tickets: ${texto}`;
+    if ($('#dlg-impresora').open) pintarImpresora();
+  }
+  Impresora.alCambiar(pintarBotonImpresora);
+  pintarBotonImpresora();
+
+  // Conecta si hace falta: primero la impresora de siempre sin preguntar; si no, abre la lista.
+  async function asegurarImpresora() {
+    if (Impresora.estado().conectada || await Impresora.reconectar()) return true;
+    return Impresora.conectar();
+  }
+
+  async function imprimirTicket(ticket, { conectarSiFalta = false, mensaje = '' } = {}) {
+    const antes = mensaje ? `${mensaje} · ` : '';
+    const n = ticket.numeroDia;
+    if (!Impresora.estado().soportada) { abrirImpresora(ticket); return; }   // sin Bluetooth: imagen del ticket
+    try {
+      if (conectarSiFalta && !(await asegurarImpresora())) return;   // cerró la lista sin elegir
+      toast(`${antes}Imprimiendo ticket #${n}…`);
+      await Impresora.imprimir(ticket);
+      toast(`${antes}Ticket #${n} impreso`);
+    } catch (error) {
+      const reintentar = { texto: error.sinImpresora ? 'Conectar e imprimir' : 'Reintentar', alHacer: () => imprimirTicket(ticket, { conectarSiFalta: true }) };
+      if (error.sinImpresora) toast(`${antes}La impresora no está conectada`, 'aviso', reintentar);
+      else toast(`No se pudo imprimir el ticket #${n}: ${error.message}`, 'error', reintentar);
+    }
+  }
+
+  // Después de cada venta: imprime solo si este equipo ya tiene impresora; si no, ofrece imprimir.
+  function despuesDeVender(r, carrito, mensaje) {
+    const ticket = ticketDeVenta(r, carrito);
+    ultimoTicket = ticket;
+    const e = Impresora.estado();
+    if (Impresora.ajustes().auto && e.soportada && (e.conectada || e.recordada)) {
+      imprimirTicket(ticket, { mensaje: `Venta #${r.numero_dia} del día registrada` });
+    } else {
+      toast(mensaje, 'ok', { texto: 'Imprimir ticket', alHacer: () => imprimirTicket(ticket, { conectarSiFalta: true }) });
+    }
+  }
+
+  function pintarImpresora() {
+    const e = Impresora.estado();
+    const a = Impresora.ajustes();
+    const form = $('#form-impresora');
+    $('#impresora-no-soportada').hidden = e.soportada;
+    const estadoTexto = $('#impresora-estado');
+    estadoTexto.textContent = !e.soportada ? 'Sin Bluetooth en este navegador.'
+      : e.ocupada ? `Imprimiendo en ${e.nombre}…`
+        : e.conectada ? `Conectada: ${e.nombre}`
+          : e.recordada ? `${e.nombre}: sin conexión. Enciéndela y toca "Conectar impresora".`
+            : 'Ninguna impresora conectada en este equipo.';
+    estadoTexto.classList.toggle('conectada', e.conectada);
+    $('#btn-impresora-conectar').hidden = e.conectada || !e.soportada;
+    $('#btn-impresora-desconectar').hidden = !e.conectada;
+    $('#btn-impresora-prueba').hidden = !e.soportada;
+    $('#btn-impresora-prueba').disabled = e.ocupada;
+    $('#btn-impresora-ultimo').hidden = !e.soportada || !ultimoTicket;
+    $('#btn-impresora-ultimo').disabled = e.ocupada;
+    $('#impresora-ayuda').hidden = !e.soportada || e.conectada;
+    $('#impresora-ajustes').hidden = !e.soportada;   // sin Bluetooth solo sirve la imagen
+    form.auto.checked = a.auto;
+    form.compatible.checked = a.compatible;
+    form.querySelector(`[name="intensidad"][value="${a.intensidad}"]`).checked = true;
+  }
+
+  function abrirImpresora(ticket) {
+    ticketVista = ticket || ultimoTicket || ticketDePrueba();
+    mostrarError('#impresora-error', '');
+    $('#impresora-ok').hidden = true;
+    pintarImpresora();
+    $('#impresora-vista').src = Impresora.imagenTicket(ticketVista).toDataURL('image/png');
+    $('#impresora-vista-texto').textContent = ticketVista.prueba ? 'Así sale el ticket (ejemplo)'
+      : `Ticket #${ticketVista.numeroDia}${ticketVista.reimpresion ? ' (reimpresión)' : ''}`;
+    if (!$('#dlg-impresora').open) $('#dlg-impresora').showModal();
+  }
+
+  $('#btn-impresora').addEventListener('click', () => abrirImpresora());
+
+  async function conectarDesdeDialogo(todos) {
+    mostrarError('#impresora-error', '');
+    $('#impresora-ok').hidden = true;
+    try {
+      if (await Impresora.conectar({ todos })) {
+        $('#impresora-ok').textContent = `Listo: ${Impresora.estado().nombre} conectada. Puedes imprimir una prueba.`;
+        $('#impresora-ok').hidden = false;
+      }
+    } catch (error) {
+      mostrarError('#impresora-error', error.message);
+    }
+  }
+  $('#btn-impresora-conectar').addEventListener('click', () => conectarDesdeDialogo(false));
+  $('#btn-impresora-todos').addEventListener('click', () => conectarDesdeDialogo(true));
+  $('#btn-impresora-desconectar').addEventListener('click', () => Impresora.desconectar());
+
+  async function imprimirDesdeDialogo(ticket) {
+    mostrarError('#impresora-error', '');
+    $('#impresora-ok').hidden = true;
+    try {
+      if (!(await asegurarImpresora())) return;
+      await Impresora.imprimir(ticket);
+      $('#impresora-ok').textContent = ticket.prueba ? 'Prueba impresa.' : `Ticket #${ticket.numeroDia} impreso.`;
+      $('#impresora-ok').hidden = false;
+    } catch (error) {
+      mostrarError('#impresora-error', error.sinImpresora ? 'No hay impresora conectada.' : `No se pudo imprimir: ${error.message}`);
+    }
+  }
+  $('#btn-impresora-prueba').addEventListener('click', () => imprimirDesdeDialogo(ticketDePrueba()));
+  $('#btn-impresora-ultimo').addEventListener('click', () => {
+    if (ultimoTicket) imprimirDesdeDialogo({ ...ultimoTicket, reimpresion: true });
+  });
+
+  $('#form-impresora').addEventListener('submit', (e) => e.preventDefault());
+  $('#form-impresora').addEventListener('change', (e) => {
+    const form = e.currentTarget;
+    Impresora.guardarAjustes({
+      auto: form.auto.checked,
+      compatible: form.compatible.checked,
+      intensidad: form.querySelector('[name="intensidad"]:checked').value,
+    });
+  });
+
+  // Sin Bluetooth (por ejemplo en iPhone): la imagen del ticket se comparte con la app de la
+  // impresora o se descarga.
+  $('#btn-impresora-imagen').addEventListener('click', async () => {
+    const t = ticketVista;
+    const blob = await new Promise((r) => Impresora.imagenTicket(t).toBlob(r, 'image/png'));
+    const nombre = t.prueba ? 'Ticket-prueba.png' : `Ticket-${t.numeroDia}-consecutivo-${t.consecutivo}.png`;
+    const archivo = new File([blob], nombre, { type: 'image/png' });
+    if (matchMedia('(pointer: coarse)').matches && navigator.canShare?.({ files: [archivo] })) {
+      try { await navigator.share({ files: [archivo], title: nombre }); return; }
+      catch (error) { if (error.name === 'AbortError') return; }
+    }
+    const enlace = el('a', { href: URL.createObjectURL(blob), download: nombre });
+    document.body.append(enlace);
+    enlace.click();
+    enlace.remove();
+    setTimeout(() => URL.revokeObjectURL(enlace.href), 10000);
+  });
+
+  // Reimprimir una venta desde su detalle (Reportes)
+  $('#btn-venta-imprimir').addEventListener('click', () => {
+    if (ventaAbierta) imprimirTicket(ticketDeVentaAbierta(ventaAbierta), { conectarSiFalta: true });
   });
 
   // ------------------------------------------------------------------
@@ -1638,6 +1849,7 @@
     $('#venta-total-usd').textContent = v.totalUSD != null
       ? `≈ ${fmtUSD.format(v.totalUSD)} (tasa de ese momento: ${fmtCOP.format(v.tasa)})` : '';
     $('#btn-venta-anular').hidden = v.estado === 'Anulada' || v.diaCerrado;
+    $('#btn-venta-imprimir').hidden = v.estado === 'Anulada';
     $('#venta-anulado').hidden = !v.anulado;
     $('#venta-anulado').textContent = v.anulado ? `Anulado: ${fmtCOP.format(v.anulado)} (no suma en el total)` : '';
   }

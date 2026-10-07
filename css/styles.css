@@ -141,6 +141,7 @@ input:focus, textarea:focus, select:focus {
 .alerta { margin: 0 0 14px; padding: 10px 12px; border-radius: var(--radio-sm); font-size: 14px; }
 .alerta-error { background: var(--peligro-suave); color: var(--peligro-texto-suave); }
 .alerta-aviso { background: var(--aviso-suave); color: var(--aviso-texto); font-weight: 500; }
+.alerta-ok { background: var(--ok-suave); color: var(--ok-texto); font-weight: 500; }
 
 .ayuda { margin: 4px 0 16px; color: var(--texto-3); font-size: 14px; }
 
@@ -558,7 +559,7 @@ body.con-carrito .toast { bottom: 104px; }
 
 /* ---------------- Tema claro / oscuro ---------------- */
 
-.btn-tema { width: 36px; height: 36px; padding: 0; flex: none; }
+.btn-tema, .btn-icono { width: 36px; height: 36px; padding: 0; flex: none; }
 .icono-tema { width: 18px; height: 18px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }
 /* El botón muestra el tema que se ve ahora: sol en claro, luna en oscuro */
 :root[data-tema="oscuro"] .icono-sol,
@@ -641,10 +642,38 @@ body.con-carrito .toast { bottom: 104px; }
 .ticket-anular { align-self: flex-end; margin-top: auto; }
 body[data-rol="atencion"] .ticket-lineas .codigo { padding: 1px 7px; font-size: 13px; }
 
+/* ---------------- Impresora de tickets ---------------- */
+
+.btn-impresora { position: relative; }
+.btn-impresora svg { fill: none; stroke: currentColor; stroke-width: 2; stroke-linejoin: round; }
+/* Punto verde: conectada; ámbar: imprimiendo (el estado también va en el texto del botón) */
+.punto-impresora {
+  position: absolute; top: 6px; right: 5px; width: 8px; height: 8px; border-radius: 50%;
+  background: transparent; box-shadow: 0 0 0 2px var(--superficie);
+}
+.btn-impresora.conectada .punto-impresora { background: var(--ok-texto); }
+.btn-impresora.ocupada .punto-impresora { background: var(--aviso-texto); }
+
+.impresora-estado { margin: -6px 0 14px; font-weight: 600; color: var(--texto-2); }
+.impresora-estado.conectada { color: var(--ok-texto); }
+.impresora-acciones { display: flex; flex-wrap: wrap; gap: 8px; margin-bottom: 10px; }
+.impresora-ayuda .enlace-venta { font-weight: 600; font-size: 14px; }
+.segmentado-3 { grid-template-columns: repeat(3, 1fr); margin-bottom: 0; }
+
+/* Vista previa: el papel siempre blanco, también en modo oscuro */
+.ticket-vista {
+  margin: 4px 0 14px; padding: 14px; max-height: 360px; overflow: auto;
+  text-align: center; background: var(--superficie-2); border: 1px solid var(--borde); border-radius: var(--radio-sm);
+}
+.ticket-vista img { display: block; width: 288px; max-width: 100%; margin: 0 auto; background: #fff; box-shadow: var(--sombra); }
+.ticket-vista figcaption { margin-top: 8px; font-size: 13px; color: var(--texto-3); }
+
 /* ---------------- Aviso flotante ---------------- */
 
 .toast {
-  position: fixed; left: 50%; bottom: 24px; transform: translateX(-50%); z-index: 100;
+  position: fixed; inset: auto auto 24px 50%; transform: translateX(-50%); z-index: 100;
+  margin: 0; border: 0; overflow: visible;   /* también es un popover (capa superior) */
+  display: flex; align-items: center; gap: 12px;
   max-width: calc(100vw - 32px);
   padding: 12px 18px; border-radius: 10px;
   background: var(--texto); color: var(--superficie);
@@ -652,6 +681,11 @@ body[data-rol="atencion"] .ticket-lineas .codigo { padding: 1px 7px; font-size: 
   box-shadow: var(--sombra-alta);
 }
 .toast[data-tipo="error"] { background: var(--peligro); color: #fff; }
+.toast-accion {
+  flex: none; padding: 5px 12px; border-radius: 6px; cursor: pointer;
+  font: inherit; font-weight: 700; color: inherit; background: transparent; border: 1px solid currentColor;
+}
+.toast-accion:hover { background: color-mix(in srgb, currentColor 15%, transparent); }
 .toast[data-tipo="aviso"] { background: var(--aviso-suave); color: var(--aviso-texto); border: 1px solid color-mix(in srgb, var(--aviso-texto) 35%, transparent); }
 
 /* ---------------- Vista ampliada: Atención al público ----------------
@@ -736,6 +770,8 @@ body[data-rol="atencion"] .btn-vender { height: 46px; min-width: 110px; padding:
   .estado-dia-acciones { width: 100%; }
   .estado-dia-acciones .btn { flex: 1; }
   .lista-tickets { grid-template-columns: 1fr; }
+  .impresora-acciones .btn { flex: 1 1 auto; }
+  .toast { width: calc(100vw - 32px); justify-content: space-between; }
   body[data-rol="atencion"] .buscador input { min-height: 60px; font-size: 18px; }
 }
 
