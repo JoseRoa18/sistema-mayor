@@ -929,10 +929,14 @@ input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-
 .grupo-carrito { display: inline-flex; vertical-align: middle; }
 .col-acciones .grupo-carrito .btn + .btn { margin-left: 0; }
 .col-acciones .grupo-carrito + .btn { margin-left: 4px; }
+/* El "−" en rojo suave (como las demás acciones de quitar) para distinguirlo de "Agregar" */
 .btn-quitar {
   width: 34px; padding: 0; font-size: 18px; line-height: 1;
+  background: var(--peligro-suave); color: var(--peligro-texto-suave);
+  border-color: color-mix(in srgb, var(--peligro) 45%, transparent);
   border-right-width: 0; border-top-right-radius: 0; border-bottom-right-radius: 0;
 }
+.btn-quitar:hover:not(:disabled) { background: color-mix(in srgb, var(--peligro-suave) 70%, var(--peligro) 18%); }
 .grupo-carrito .btn-vender {
   border-top-left-radius: 0; border-bottom-left-radius: 0;
   border-left-color: color-mix(in srgb, var(--primario) 30%, transparent);

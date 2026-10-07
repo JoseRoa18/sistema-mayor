@@ -911,7 +911,7 @@
     return el('span', { class: 'grupo-carrito' },
       el('button', {
         type: 'button',
-        class: 'btn btn-sm btn-en-carrito btn-quitar',
+        class: 'btn btn-sm btn-quitar',
         title: 'Quitar una unidad del carrito',
         'aria-label': `Quitar una unidad de ${p.nombre} del carrito`,
         'data-id': p.id,
