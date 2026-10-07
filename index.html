@@ -96,7 +96,8 @@
       <section class="panel-superior">
         <div class="buscador">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
-          <input id="buscar" type="search" placeholder="Buscar por código o nombre…" autocomplete="off" aria-label="Buscar producto por código, nombre o descripción">
+          <input id="buscar" type="search" placeholder="Buscar por código o nombre…" autocomplete="off" aria-label="Buscar producto por código, nombre o descripción" aria-describedby="atajo-buscar">
+          <span id="atajo-buscar" class="atajo-buscar">Escribe en cualquier parte · <kbd>Esc</kbd> vuelve aquí</span>
         </div>
 
         <div class="tasa solo-admin">
@@ -115,6 +116,10 @@
             <option value="">Todas las categorías</option>
           </select>
           <p id="conteo" class="conteo"></p>
+          <span id="paginacion-mini" class="paginacion-mini" hidden>
+            <button id="mini-anterior" type="button" class="btn btn-secundario btn-sm" aria-label="Página anterior" title="Página anterior (Re Pág)">‹</button>
+            <button id="mini-siguiente" type="button" class="btn btn-secundario btn-sm" aria-label="Página siguiente" title="Página siguiente (Av Pág)">›</button>
+          </span>
         </div>
         <div class="acciones-lista">
           <button id="btn-lista-precios" type="button" class="btn btn-secundario" title="Descargar la lista de precios en PDF">Lista de precios</button>
@@ -143,6 +148,13 @@
         </table>
         <p id="vacio" class="vacio" hidden></p>
       </div>
+
+      <nav id="paginacion" class="paginacion" aria-label="Páginas de productos" hidden>
+        <button id="pagina-anterior" type="button" class="btn btn-secundario btn-sm" title="Página anterior (Re Pág)">‹ Anterior</button>
+        <div id="paginas" class="paginas"></div>
+        <span id="pagina-texto" class="pagina-texto"></span>
+        <button id="pagina-siguiente" type="button" class="btn btn-secundario btn-sm" title="Página siguiente (Av Pág)">Siguiente ›</button>
+      </nav>
       </section>
 
       <!-- ---------- Reportes / cierre del día (administrador y jefe) ---------- -->

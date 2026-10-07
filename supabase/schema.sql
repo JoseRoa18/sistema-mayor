@@ -73,6 +73,8 @@ alter table public.productos drop constraint if exists productos_categoria_fkey;
 alter table public.productos add constraint productos_categoria_fkey
   foreign key (categoria) references public.categorias (nombre) on update cascade;
 create index if not exists productos_categoria on public.productos (categoria);
+-- La app trae cada pocos segundos solo los productos que cambiaron (por fecha de cambio).
+create index if not exists productos_actualizado_en on public.productos (actualizado_en);
 
 -- Letra con la que empieza un código: "V-3013" y "V3013" → "V".
 create or replace function public.prefijo_codigo(p_codigo text)
@@ -347,6 +349,29 @@ create trigger configuracion_actualizada
 
 -- Búsqueda por código, nombre, descripción o categoría, sin importar mayúsculas,
 -- tildes ni guiones ("cafe" encuentra "Café"; "v3013" encuentra "V-3013" y al revés).
+-- Inventario para la app: con p_desde nulo, todos los productos; si no, solo los que
+-- cambiaron después de esa hora. Devuelve también la hora del servidor (para la siguiente
+-- consulta) y cuántos productos hay en total (así la app nota si se eliminó alguno).
+-- La app busca en el equipo con esto; cada pocos segundos pide solo lo que cambió.
+-- Corre con los permisos de quien llama, así que respeta RLS.
+create or replace function public.productos_cambiados(p_desde timestamptz default null)
+returns jsonb
+language sql
+stable
+set search_path = ''
+as $$
+  select jsonb_build_object(
+    'ahora', now(),
+    'total', (select count(*) from public.productos),
+    'productos', coalesce((
+      select jsonb_agg(to_jsonb(p) order by p.id)
+      from public.productos p
+      where p_desde is null or p.actualizado_en > p_desde
+    ), '[]'::jsonb)
+  )
+$$;
+
+-- Búsqueda en el servidor (la app ya busca en el equipo; se conserva por compatibilidad).
 -- Cada palabra escrita debe aparecer. p_categoria (opcional) filtra por categoría.
 -- Primero salen los productos cuyo código es exactamente el buscado,
 -- luego los que empiezan por él, y después el resto por nombre.
@@ -1512,6 +1537,7 @@ revoke execute on function public.dia_negocio(timestamptz) from public, anon, au
 -- Funciones que usa la app (solo con sesión iniciada; cada una revisa el rol).
 revoke execute on function public.rol_actual() from public, anon;
 revoke execute on function public.buscar_productos(text, text) from public, anon;
+revoke execute on function public.productos_cambiados(timestamptz) from public, anon;
 revoke execute on function public.lista_categorias() from public, anon;
 revoke execute on function public.cambiar_precios_masivo(text, text, text, numeric, integer, boolean, text) from public, anon;
 revoke execute on function public.estado_dia(date) from public, anon;
@@ -1532,6 +1558,7 @@ revoke execute on function public.guardar_producto(bigint, text, text, text, tex
 revoke execute on function public.importar_productos(jsonb, text, text) from public, anon;
 grant execute on function public.rol_actual() to authenticated;
 grant execute on function public.buscar_productos(text, text) to authenticated;
+grant execute on function public.productos_cambiados(timestamptz) to authenticated;
 grant execute on function public.lista_categorias() to authenticated;
 grant execute on function public.cambiar_precios_masivo(text, text, text, numeric, integer, boolean, text) to authenticated;
 grant execute on function public.estado_dia(date) to authenticated;

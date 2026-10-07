@@ -9,7 +9,9 @@
   const estado = {
     perfil: null,     // { rol }
     tasa: null,       // pesos por 1 USD, o null si no está definida
-    productos: [],
+    productos: [],                // los de la página que se ve
+    resultados: [],               // todo lo que coincide con la búsqueda
+    pagina: 1,
     busqueda: '',
     carrito: new Map(),           // producto_id → { producto, cantidad }
     precioRequiereClave: true,    // lo decide el jefe en Configuración
@@ -147,7 +149,8 @@
     mostrarSeccion('inventario');
     // La impresora de este equipo se reconecta sola (sin abrir la lista) si el navegador lo permite.
     if (window.Impresora?.ajustes().id) window.Impresora.reconectar();
-    await Promise.all([cargarTasa(), cargarCategorias(), cargarEstadoDia(), buscar('')]);
+    iniciarSincronizacion();
+    await Promise.all([cargarTasa(), cargarCategorias(), cargarEstadoDia(), cargarInventario()]);
     $('#buscar').focus();
   }
 
@@ -182,7 +185,9 @@
   // Al salir no debe quedar nada del usuario anterior en pantalla.
   db.auth.onAuthStateChange((evento) => {
     if (evento === 'SIGNED_OUT') {
-      Object.assign(estado, { perfil: null, tasa: null, productos: [], busqueda: '', carrito: new Map(), categoria: '', estadoDia: null });
+      Object.assign(estado, { perfil: null, tasa: null, productos: [], resultados: [], pagina: 1, busqueda: '', carrito: new Map(), categoria: '', estadoDia: null });
+      clearInterval(temporizadorInventario);
+      Object.assign(inventario, { porId: new Map(), normal: new Map(), listo: false, cursor: null });
       $('#filtro-categoria').value = '';
       $('#aviso-dia-cerrado').hidden = true;
       // Respuestas que aún vengan en camino de la sesión anterior se descartan.
@@ -298,28 +303,188 @@
   });
 
   // ------------------------------------------------------------------
-  // Productos: búsqueda y listado
+  // Productos: búsqueda instantánea y paginación
   // ------------------------------------------------------------------
+  // El inventario se carga una vez al entrar y se busca en este equipo, sin esperar al
+  // servidor en cada tecla. Cada pocos segundos se traen solo los productos que cambiaron
+  // (existencias y precios que mueven los demás usuarios).
 
-  let numeroConsulta = 0;
+  const POR_PAGINA = 10;
+  const SINCRONIZAR_CADA = 15000;      // cada cuánto se traen los cambios de los demás usuarios
+  const inventario = { porId: new Map(), normal: new Map(), listo: false, cursor: null };
+  let numeroConsulta = 0;              // descarta respuestas que lleguen de una sesión anterior
+  let temporizadorInventario;
+  const ordenNombres = new Intl.Collator('es', { sensitivity: 'base', numeric: true });
 
-  async function buscar(texto) {
-    estado.busqueda = texto;
-    const esta = ++numeroConsulta;
-    const { data, error } = await db.rpc('buscar_productos', { q: texto, p_categoria: estado.categoria || null });
-    if (esta !== numeroConsulta) return;   // ya hay una búsqueda más reciente
-    if (error) { toast('Error al buscar productos.', 'error'); return; }
-    estado.productos = data;
-    // Lo que está en el carrito se actualiza con la existencia y el precio más recientes.
-    for (const p of data) {
-      const linea = estado.carrito.get(p.id);
-      if (!linea) continue;
-      linea.producto = p;
-      linea.cantidad = Math.min(linea.cantidad, p.cantidad);
-      if (linea.cantidad <= 0) estado.carrito.delete(p.id);
-    }
-    actualizarCarrito();
+  // Texto para comparar: sin mayúsculas, tildes ni guiones ("v3013" encuentra "V-3013").
+  const normalizar = (texto) => sinTildes(texto ?? '').replace(/[-–—]/g, '');
+
+  function guardarEnInventario(p) {
+    inventario.porId.set(p.id, p);
+    inventario.normal.set(p.id, {
+      codigo: normalizar(p.codigo),
+      texto: normalizar(`${p.codigo || ''} ${p.nombre} ${p.descripcion || ''} ${p.categoria || ''}`),
+    });
   }
+
+  // La base responde con los productos (todos, o los que cambiaron desde `desde`), la hora del
+  // servidor y el total. La siguiente consulta parte de esa hora, con 5 segundos de margen por
+  // si algo se estaba guardando justo en ese momento.
+  async function pedirInventario(desde) {
+    const { data, error } = await db.rpc('productos_cambiados', { p_desde: desde });
+    if (error) throw error;
+    inventario.cursor = new Date(Date.parse(data.ahora) - 5000).toISOString();
+    return data;
+  }
+
+  let cargandoInventario = null;
+  function cargarInventario() {
+    cargandoInventario ||= (async () => {
+      const esta = numeroConsulta;
+      try {
+        const r = await pedirInventario(null);
+        if (esta !== numeroConsulta) return;
+        inventario.porId = new Map();
+        inventario.normal = new Map();
+        r.productos.forEach(guardarEnInventario);
+        inventario.listo = true;
+        aplicarBusqueda({ conservarPagina: true });
+      } catch {
+        if (esta === numeroConsulta) toast('No se pudieron cargar los productos. Revisa la conexión a internet.', 'error');
+      }
+    })().finally(() => { cargandoInventario = null; });
+    return cargandoInventario;
+  }
+
+  // Solo lo que cambió. Si el total no coincide (se eliminó algún producto), se recarga todo.
+  async function traerCambios() {
+    const esta = numeroConsulta;
+    const r = await pedirInventario(inventario.cursor);
+    if (esta !== numeroConsulta) return;
+    let hubo = false;
+    for (const p of r.productos) {
+      if (inventario.porId.get(p.id)?.actualizado_en === p.actualizado_en) continue;
+      guardarEnInventario(p);
+      hubo = true;
+    }
+    if (r.total !== inventario.porId.size) { await cargarInventario(); return; }
+    if (hubo) aplicarBusqueda({ conservarPagina: true });
+  }
+
+  let sincronizando = null;
+  function sincronizarInventario() {
+    if (!inventario.listo) return cargarInventario();
+    if (!sincronizando) sincronizando = traerCambios().catch(() => {}).finally(() => { sincronizando = null; });
+    return sincronizando;
+  }
+
+  function iniciarSincronizacion() {
+    clearInterval(temporizadorInventario);
+    temporizadorInventario = setInterval(() => { if (!document.hidden && estado.perfil) sincronizarInventario(); }, SINCRONIZAR_CADA);
+  }
+  document.addEventListener('visibilitychange', () => {
+    if (!document.hidden && estado.perfil) sincronizarInventario();
+  });
+
+  // Coincidencias: todas las palabras deben aparecer en el código, nombre, descripción o
+  // categoría. Primero el código exacto, luego los que empiezan por ese código, luego por nombre.
+  function resultadosDe(texto, categoria) {
+    const q = normalizar(texto);
+    const palabras = q.split(/\s+/).filter(Boolean);
+    const salida = [];
+    for (const [id, p] of inventario.porId) {
+      if (categoria && p.categoria !== categoria) continue;
+      const n = inventario.normal.get(id);
+      if (palabras.every((w) => n.texto.includes(w))) salida.push(p);
+    }
+    const rango = (p) => {
+      if (!q) return 2;
+      const c = inventario.normal.get(p.id).codigo;
+      return c === q ? 0 : c && c.startsWith(q) ? 1 : 2;
+    };
+    return salida.sort((a, b) => rango(a) - rango(b) || ordenNombres.compare(a.nombre, b.nombre));
+  }
+
+  function aplicarBusqueda({ conservarPagina = false } = {}) {
+    estado.resultados = inventario.listo ? resultadosDe(estado.busqueda, estado.categoria) : [];
+    const paginas = Math.max(1, Math.ceil(estado.resultados.length / POR_PAGINA));
+    estado.pagina = conservarPagina ? Math.min(estado.pagina, paginas) : 1;
+    // Lo que está en el carrito se actualiza con la existencia y el precio más recientes.
+    if (inventario.listo) {
+      for (const [id, linea] of estado.carrito) {
+        const p = inventario.porId.get(id);
+        if (!p) { estado.carrito.delete(id); continue; }
+        linea.producto = p;
+        linea.cantidad = Math.min(linea.cantidad, p.cantidad);
+        if (linea.cantidad <= 0) estado.carrito.delete(id);
+      }
+    }
+    mostrarPagina();
+  }
+
+  function mostrarPagina() {
+    const inicio = (estado.pagina - 1) * POR_PAGINA;
+    estado.productos = estado.resultados.slice(inicio, inicio + POR_PAGINA);
+    actualizarCarrito();   // repinta la lista (botones "Agregar") y la barra del carrito
+  }
+
+  function buscar(texto) {
+    estado.busqueda = texto;
+    aplicarBusqueda();
+  }
+
+  function irAPagina(n) {
+    const paginas = Math.max(1, Math.ceil(estado.resultados.length / POR_PAGINA));
+    const destino = Math.min(Math.max(1, n), paginas);
+    if (destino === estado.pagina) return;
+    estado.pagina = destino;
+    mostrarPagina();
+    // Si la tabla quedó arriba (fuera de la vista), se sube para ver la página desde el inicio.
+    const tabla = $('.tabla-contenedor');
+    if (tabla.getBoundingClientRect().top < 0) tabla.scrollIntoView({ block: 'start' });
+  }
+
+  // Números de página: siempre la primera y la última, y las vecinas de la actual
+  // (1 … 4 5 6 … 32). Un solo número saltado se muestra en vez de "…".
+  function numerosDePagina(actual, total) {
+    const elegidas = new Set([1, total, actual - 1, actual, actual + 1]);
+    if (actual <= 3) [2, 3, 4].forEach((n) => elegidas.add(n));
+    if (actual >= total - 2) [total - 3, total - 2, total - 1].forEach((n) => elegidas.add(n));
+    const lista = [...elegidas].filter((n) => n >= 1 && n <= total).sort((a, b) => a - b);
+    const salida = [];
+    let anterior = 0;
+    for (const n of lista) {
+      if (n - anterior === 2) salida.push(anterior + 1);
+      else if (n - anterior > 2) salida.push('…');
+      salida.push(n);
+      anterior = n;
+    }
+    return salida;
+  }
+
+  function pintarPaginacion(total) {
+    const paginas = Math.ceil(total / POR_PAGINA);
+    $('#paginacion').hidden = paginas <= 1;
+    $('#paginacion-mini').hidden = paginas <= 1;   // flechas junto al conteo, para no bajar hasta el final
+    if (paginas <= 1) return;
+    $('#pagina-anterior').disabled = $('#mini-anterior').disabled = estado.pagina <= 1;
+    $('#pagina-siguiente').disabled = $('#mini-siguiente').disabled = estado.pagina >= paginas;
+    $('#pagina-texto').textContent = `Página ${estado.pagina} de ${paginas}`;
+    $('#paginas').replaceChildren(...numerosDePagina(estado.pagina, paginas).map((n) => (n === '…'
+      ? el('span', { class: 'pagina-salto', 'aria-hidden': 'true' }, '…')
+      : el('button', {
+        type: 'button',
+        class: n === estado.pagina ? 'pagina actual' : 'pagina',
+        'aria-label': `Página ${n}`,
+        ...(n === estado.pagina ? { 'aria-current': 'page' } : {}),
+        onclick: () => irAPagina(n),
+      }, String(n)))));
+  }
+
+  $('#pagina-anterior').addEventListener('click', () => irAPagina(estado.pagina - 1));
+  $('#pagina-siguiente').addEventListener('click', () => irAPagina(estado.pagina + 1));
+  $('#mini-anterior').addEventListener('click', () => irAPagina(estado.pagina - 1));
+  $('#mini-siguiente').addEventListener('click', () => irAPagina(estado.pagina + 1));
 
   // Categorías: llenan el filtro del inventario, el formulario y "Precios en bloque".
   async function cargarCategorias() {
@@ -351,7 +516,7 @@
 
   $('#filtro-categoria').addEventListener('change', (e) => {
     estado.categoria = e.target.value;
-    buscar(estado.busqueda);
+    aplicarBusqueda();
   });
 
   // ¿Ya se cerró el día de hoy? Si sí, se avisa y no se puede vender.
@@ -368,20 +533,53 @@
     $('#btn-cerrar-dia').hidden = data.cerrado;
   }
 
-  let temporizadorBusqueda;
-  $('#buscar').addEventListener('input', (e) => {
-    clearTimeout(temporizadorBusqueda);
-    temporizadorBusqueda = setTimeout(() => buscar(e.target.value), 250);
-  });
+  $('#buscar').addEventListener('input', (e) => buscar(e.target.value));
 
-  // Enter busca de inmediato y deja el texto seleccionado, así el siguiente
-  // código (escrito o leído con lector de código de barras) reemplaza al anterior.
+  // Enter deja el texto seleccionado, así el siguiente código (escrito o leído con lector
+  // de código de barras) reemplaza al anterior.
   $('#buscar').addEventListener('keydown', (e) => {
     if (e.key !== 'Enter') return;
-    clearTimeout(temporizadorBusqueda);
     buscar(e.target.value);
     e.target.select();
   });
+
+  // Atajos del inventario (para todos los usuarios):
+  // · Escribir en cualquier parte de la pantalla va directo al buscador y reemplaza el código
+  //   anterior (también funciona con lector de código de barras).
+  // · Esc vuelve al buscador y selecciona lo escrito (dentro del buscador, Esc lo borra).
+  // · Av Pág / Re Pág pasan a la página siguiente o anterior.
+  document.addEventListener('keydown', (e) => {
+    if (e.ctrlKey || e.altKey || e.metaKey || e.isComposing) return;
+    if ($('#vista-app').hidden || $('#seccion-inventario').hidden) return;
+    if (document.querySelector('dialog[open]') || !$('#menu-tema').hidden) return;
+    const buscador = $('#buscar');
+    const objetivo = e.target instanceof Element ? e.target : null;
+
+    if (e.key === 'PageDown' || e.key === 'PageUp') {
+      if (!$('#paginacion').hidden) {
+        e.preventDefault();
+        irAPagina(estado.pagina + (e.key === 'PageDown' ? 1 : -1));
+      }
+      return;
+    }
+    if (objetivo === buscador) return;   // ya está escribiendo en el buscador
+    if (e.key === 'Escape') {
+      e.preventDefault();
+      buscador.focus();
+      buscador.select();
+      return;
+    }
+    // En otro campo de texto se escribe normal (el filtro de categorías no cuenta:
+    // ahí una letra cambiaría la categoría en vez de buscar).
+    const enCampo = objetivo?.closest('input, textarea, select, [contenteditable="true"]');
+    if (enCampo && objetivo !== $('#filtro-categoria')) return;
+    if (e.key.length !== 1 || e.key === ' ') return;   // solo letras, números y signos
+    e.preventDefault();
+    buscador.focus();
+    buscador.value = e.key;
+    buscar(buscador.value);
+  });
+
 
   function etiquetaCantidad(cantidad) {
     if (cantidad <= 0) return el('span', { class: 'stock stock-agotado' }, 'Agotado');
@@ -419,21 +617,25 @@
   }
 
   function pintarProductos() {
-    const total = estado.productos.length;
+    const total = estado.resultados.length;
     const hayBusqueda = estado.busqueda.trim() !== '';
 
     $('#tabla-cuerpo').replaceChildren(...estado.productos.map(filaProducto));
 
     const vacio = $('#vacio');
     vacio.hidden = total > 0;
-    vacio.textContent = hayBusqueda
-      ? `No se encontraron productos para “${estado.busqueda.trim()}”.`
-      : 'Aún no hay productos registrados.';
+    vacio.textContent = !inventario.listo ? 'Cargando productos…'
+      : hayBusqueda ? `No se encontraron productos para “${estado.busqueda.trim()}”.`
+        : estado.categoria ? `No hay productos en ${estado.categoria}.`
+          : 'Aún no hay productos registrados.';
 
-    let conteo = total === 1 ? '1 producto' : `${total} productos`;
-    if (hayBusqueda) conteo += ' encontrados';
-    if (total >= 300) conteo += ' (se muestran los primeros 300, usa el buscador para afinar)';
-    $('#conteo').textContent = total ? conteo : '';
+    // "Mostrando 11–20 de 320 productos" cuando hay más de una página
+    const nombre = `${total === 1 ? 'producto' : 'productos'}${hayBusqueda ? (total === 1 ? ' encontrado' : ' encontrados') : ''}`;
+    const inicio = (estado.pagina - 1) * POR_PAGINA;
+    $('#conteo').textContent = !total ? ''
+      : total <= POR_PAGINA ? `${fmtNumero.format(total)} ${nombre}`
+        : `Mostrando ${inicio + 1}–${inicio + estado.productos.length} de ${fmtNumero.format(total)} ${nombre}`;
+    pintarPaginacion(total);
   }
 
   // ------------------------------------------------------------------
@@ -546,7 +748,7 @@
       toast(productoEditando ? 'Producto actualizado' : 'Producto creado');
       cargarCategorias();
       // Sin await: el botón se libera de inmediato y la lista se actualiza aparte.
-      buscar(estado.busqueda);
+      sincronizarInventario();
     });
   });
 
@@ -575,7 +777,9 @@
         return;
       }
       toast('Producto eliminado');
-      buscar(estado.busqueda);
+      inventario.porId.delete(productoEliminando.id);
+      inventario.normal.delete(productoEliminando.id);
+      aplicarBusqueda({ conservarPagina: true });
     });
   });
 
@@ -706,7 +910,7 @@
             estado.carrito.delete(r.producto_id);
           }
           actualizarCarrito();
-          buscar(estado.busqueda);
+          sincronizarInventario();
         }
         return;
       }
@@ -715,7 +919,7 @@
       const n = r.lineas.length;
       despuesDeVender(r, carrito, `Venta #${r.numero_dia} del día registrada (${r.vendedor}): ${n} ${n === 1 ? 'producto' : 'productos'} · ${fmtCOP.format(r.total)} · consecutivo ${r.ticket}`);
       vaciarCarrito();
-      buscar(estado.busqueda);
+      sincronizarInventario();
       if (!$('#seccion-cierre').hidden) cargarCierre();
       // Listo para el siguiente cliente: el buscador queda seleccionado.
       $('#buscar').focus();
@@ -1025,7 +1229,7 @@
       $('#dlg-movimiento').close();
       const m = r.movimiento;
       toast(`${tipo === 'entrada' ? 'Entrada' : 'Salida'} registrada: ${p.nombre} queda con ${fmtNumero.format(m.stock_despues)} unidades`);
-      buscar(estado.busqueda);
+      sincronizarInventario();
       if (!$('#seccion-cierre').hidden) cargarCierre();
     });
   });
@@ -1113,7 +1317,7 @@
       if (!r.ok) { mostrarError('#precios-error', r.error); return; }
       $('#dlg-precios').close();
       toast(`Precios actualizados: ${r.cambiados} ${r.cambiados === 1 ? 'producto' : 'productos'}`);
-      buscar(estado.busqueda);
+      sincronizarInventario();
       if (!$('#seccion-cierre').hidden) cargarCierre();
     });
   });
@@ -1366,7 +1570,7 @@
       }
       $('#dlg-importar').close();
       toast(`Importación lista: ${r.creados} nuevos, ${r.actualizados} actualizados, ${r.sin_cambios} sin cambios`);
-      buscar(estado.busqueda);
+      sincronizarInventario();
       if (!$('#seccion-cierre').hidden) cargarCierre();
     });
   });
@@ -1425,7 +1629,7 @@
       pintarCategoriasConfig(r.categorias);
       editarCategoria(null);
       cargarCategorias();
-      buscar(estado.busqueda);
+      sincronizarInventario();
     });
   });
 
@@ -1994,7 +2198,7 @@
       if (!$('#seccion-cierre').hidden) cargarCierre();
       if (!$('#seccion-administracion').hidden) cargarTickets();
       if ($('#dlg-venta').open && ventaAbierta) abrirVentaNumero(ventaAbierta.ticket);
-      buscar(estado.busqueda);
+      sincronizarInventario();
     });
   });
 

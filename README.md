@@ -84,8 +84,20 @@ Busca por **código**, nombre o descripción, sin importar mayúsculas, tildes n
 
 - Primero aparece el producto cuyo código es **exactamente** el buscado, luego los
   que **empiezan** por ese código, y después el resto.
-- Con **Enter** busca de inmediato y deja el texto seleccionado: el siguiente código
-  reemplaza al anterior (sirve también con lector de código de barras).
+- La búsqueda es **instantánea**: el inventario se carga una vez al entrar y se busca en el
+  mismo equipo, sin esperar al servidor en cada tecla (con 5.000 productos tarda menos de
+  10 milésimas de segundo). Cada 15 segundos, y al volver a la pestaña, se traen solo los
+  productos que cambiaron (existencias y precios que mueven los demás usuarios).
+- **Escribir en cualquier parte** de la pantalla del inventario va directo al buscador y
+  reemplaza el código anterior, aunque se haya hecho clic en otro lado (sirve también con
+  lector de código de barras). **Esc** vuelve al buscador y selecciona lo escrito; dentro del
+  buscador, Esc lo borra.
+- Con **Enter** deja el texto seleccionado: el siguiente código reemplaza al anterior.
+
+**Páginas:** la lista muestra **10 productos por página**, con "Mostrando 11–20 de 320". Se
+cambia de página con las flechas ‹ › junto al conteo, con los números de página al final de la
+lista o con las teclas **Av Pág** / **Re Pág**. Cada búsqueda nueva vuelve a la página 1; si
+cambian datos mientras se mira una página, se queda en esa página.
 
 ### Código del producto
 
