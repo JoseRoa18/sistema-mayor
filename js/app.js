@@ -80,11 +80,34 @@
     for (const v of ['cargando', 'login', 'app']) $(`#vista-${v}`).hidden = v !== nombre;
   }
 
-  function mostrarError(selector, mensaje) {
+  // Mensaje de error de un formulario. Con `campo` (su nombre o el elemento), ese campo queda
+  // marcado (borde rojo, aria-invalid) y enlazado al mensaje para los lectores de pantalla.
+  // Las funciones de la base dicen qué campo falló en `campo`; "codigo" en el carrito es el del vendedor.
+  const ALIAS_CAMPO = { precio: 'precio_cop', codigo: 'vendedor' };
+  function mostrarError(selector, mensaje, campo = null) {
     const nodo = $(selector);
     nodo.textContent = mensaje || '';
     nodo.hidden = !mensaje;
+    const contenedor = nodo.closest('form') || nodo.closest('dialog');
+    contenedor?.querySelectorAll('[aria-invalid="true"]').forEach(desmarcarCampo);
+    if (!mensaje || !campo || !contenedor) return;
+    const elemento = typeof campo === 'string'
+      ? contenedor.querySelector(`[name="${campo}"]`) || contenedor.querySelector(`[name="${ALIAS_CAMPO[campo]}"]`)
+      : campo;
+    if (!elemento) return;
+    elemento.setAttribute('aria-invalid', 'true');
+    elemento.setAttribute('aria-describedby', nodo.id);
   }
+
+  function desmarcarCampo(elemento) {
+    elemento.removeAttribute('aria-invalid');
+    if (elemento.getAttribute('aria-describedby')?.endsWith('-error')) elemento.removeAttribute('aria-describedby');
+  }
+
+  // Al corregir el campo deja de verse como erróneo.
+  document.addEventListener('input', (e) => {
+    if (e.target.getAttribute?.('aria-invalid') === 'true') desmarcarCampo(e.target);
+  });
 
   let temporizadorToast;
   // Aviso flotante. Puede llevar un botón (accion = { texto, alHacer }), por ejemplo "Imprimir ticket".
@@ -114,8 +137,35 @@
   async function conBotonOcupado(form, accion) {
     const boton = form.querySelector('[type="submit"]');
     boton.disabled = true;
-    try { await accion(); } finally { boton.disabled = false; }
+    boton.setAttribute('aria-busy', 'true');   // muestra el indicador de "trabajando"
+    try { await accion(); } finally { boton.disabled = false; boton.removeAttribute('aria-busy'); }
   }
+
+  // Avisos solo para lectores de pantalla (sin mover el foco): producto agregado, resultados…
+  function anunciar(texto) {
+    const nodo = $('#anuncio');
+    nodo.textContent = '';
+    setTimeout(() => { nodo.textContent = texto; }, 60);   // vaciar y escribir: se repite aunque sea igual
+  }
+
+  // Cada ventana se anuncia con su título.
+  document.querySelectorAll('dialog').forEach((d) => {
+    if (d.hasAttribute('aria-labelledby') || d.hasAttribute('aria-label')) return;
+    const titulo = d.querySelector('h2');
+    if (!titulo) return;
+    titulo.id ||= `${d.id}-titulo`;
+    d.setAttribute('aria-labelledby', titulo.id);
+  });
+
+  // Mostrar u ocultar la contraseña al iniciar sesión.
+  $('#btn-ver-clave').addEventListener('click', (e) => {
+    const campo = $('#form-login').clave;
+    const ver = campo.type === 'password';
+    campo.type = ver ? 'text' : 'password';
+    e.currentTarget.textContent = ver ? 'Ocultar' : 'Mostrar';
+    e.currentTarget.setAttribute('aria-pressed', String(ver));
+    campo.focus();
+  });
 
   // ------------------------------------------------------------------
   // Sesión
@@ -146,7 +196,7 @@
     $('#usuario-rol').textContent = { admin: 'Administrador', jefe: 'Jefe', atencion: 'Atención al público' }[perfil.rol];
 
     mostrarVista('app');
-    mostrarSeccion('inventario');
+    mostrarSeccion(seccionDelEnlace());
     // La impresora de este equipo se reconecta sola (sin abrir la lista) si el navegador lo permite.
     if (window.Impresora?.ajustes().id) window.Impresora.reconectar();
     iniciarSincronizacion();
@@ -162,7 +212,9 @@
     mostrarError('#login-error', '');
 
     if (!usuario || !clave) {
-      mostrarError('#login-error', 'Escribe tu usuario y contraseña.');
+      const falta = usuario ? form.clave : form.usuario;
+      falta.focus();
+      mostrarError('#login-error', 'Escribe tu usuario y contraseña.', falta);
       return;
     }
 
@@ -170,9 +222,12 @@
       const email = usuario.includes('@') ? usuario : `${usuario}@${DOMINIO_USUARIOS}`;
       const { error } = await db.auth.signInWithPassword({ email, password: clave });
       if (error) {
-        mostrarError('#login-error', error.message === 'Invalid login credentials'
-          ? 'Usuario o contraseña incorrectos.'
-          : `No se pudo iniciar sesión: ${error.message}`);
+        const credenciales = error.message === 'Invalid login credentials';
+        mostrarError('#login-error', credenciales
+          ? 'Usuario o contraseña incorrectos. Revisa los dos y vuelve a intentar.'
+          : `No se pudo iniciar sesión: ${error.message}. Revisa la conexión a internet y vuelve a intentar.`,
+        credenciales ? form.clave : null);
+        if (credenciales) form.clave.select();
         return;
       }
       form.reset();
@@ -218,8 +273,26 @@
   const puedeAdministrar = () => ['admin', 'jefe'].includes(estado.perfil?.rol);
   const esJefe = () => estado.perfil?.rol === 'jefe';
 
-  function mostrarSeccion(nombre) {
+  const ENLACE_SECCION = { inventario: '', cierre: 'reportes', administracion: 'administracion', configuracion: 'configuracion' };
+
+  // Sección pedida en el enlace (#reportes…), si este usuario la puede ver.
+  function seccionDelEnlace() {
+    const pedida = Object.keys(ENLACE_SECCION).find((k) => ENLACE_SECCION[k] && `#${ENLACE_SECCION[k]}` === location.hash);
+    const pestana = pedida && document.querySelector(`.pestana[data-seccion="${pedida}"]`);
+    return pestana && getComputedStyle(pestana).display !== 'none' ? pedida : 'inventario';
+  }
+
+  function mostrarSeccion(nombre, { enfocar = false } = {}) {
     for (const s of ['inventario', 'cierre', 'administracion', 'configuracion']) $(`#seccion-${s}`).hidden = nombre !== s;
+    history.replaceState(null, '', ENLACE_SECCION[nombre] ? `#${ENLACE_SECCION[nombre]}` : location.pathname + location.search);
+    if (enfocar) {
+      if (nombre === 'inventario') $('#buscar').focus();
+      else {
+        const titulo = $(`#seccion-${nombre} h1`);
+        titulo.tabIndex = -1;
+        titulo.focus({ preventScroll: true });
+      }
+    }
     document.querySelectorAll('.pestana').forEach((p) => {
       if (p.dataset.seccion === nombre) p.setAttribute('aria-current', 'page');
       else p.removeAttribute('aria-current');
@@ -241,7 +314,7 @@
   }
 
   document.querySelectorAll('.pestana').forEach((p) => {
-    p.addEventListener('click', () => mostrarSeccion(p.dataset.seccion));
+    p.addEventListener('click', () => mostrarSeccion(p.dataset.seccion, { enfocar: true }));
   });
 
   // ------------------------------------------------------------------
@@ -428,9 +501,15 @@
     actualizarCarrito();   // repinta la lista (botones "Agregar") y la barra del carrito
   }
 
+  let temporizadorAnuncio;
   function buscar(texto) {
     estado.busqueda = texto;
     aplicarBusqueda();
+    clearTimeout(temporizadorAnuncio);
+    temporizadorAnuncio = setTimeout(() => {
+      const n = estado.resultados.length;
+      anunciar(n ? (n === 1 ? '1 producto encontrado' : `${fmtNumero.format(n)} productos encontrados`) : 'No se encontraron productos');
+    }, 800);
   }
 
   function irAPagina(n) {
@@ -624,10 +703,22 @@
 
     const vacio = $('#vacio');
     vacio.hidden = total > 0;
-    vacio.textContent = !inventario.listo ? 'Cargando productos…'
+    const mensajeVacio = !inventario.listo ? 'Cargando productos…'
       : hayBusqueda ? `No se encontraron productos para “${estado.busqueda.trim()}”.`
         : estado.categoria ? `No hay productos en ${estado.categoria}.`
           : 'Aún no hay productos registrados.';
+    const puedeLimpiar = inventario.listo && !total && (hayBusqueda || estado.categoria);
+    vacio.replaceChildren(...[el('span', {}, mensajeVacio), puedeLimpiar ? el('button', {
+      type: 'button',
+      class: 'btn btn-secundario btn-sm vacio-accion',
+      onclick: () => {
+        $('#buscar').value = '';
+        estado.categoria = '';
+        $('#filtro-categoria').value = '';
+        buscar('');
+        $('#buscar').focus();
+      },
+    }, 'Ver todos los productos') : null].filter(Boolean));
 
     // "Mostrando 11–20 de 320 productos" cuando hay más de una página
     const nombre = `${total === 1 ? 'producto' : 'productos'}${hayBusqueda ? (total === 1 ? ' encontrado' : ' encontrados') : ''}`;
@@ -730,7 +821,7 @@
     const pideClave = !$('#producto-clave').hidden;
     if (pideClave && !form.clave.value) {
       form.clave.focus();
-      return mostrarError('#producto-error', 'Para cambiar el precio hace falta la clave del jefe.');
+      return mostrarError('#producto-error', 'Para cambiar el precio hace falta la clave del jefe.', 'clave');
     }
 
     conBotonOcupado(form, async () => {
@@ -740,7 +831,7 @@
       });
       form.clave.value = '';
       if (!r.ok) {
-        mostrarError('#producto-error', r.error);
+        mostrarError('#producto-error', r.error, r.campo);
         if (r.campo === 'clave') { $('#producto-clave').hidden = false; form.clave.focus(); }
         return;
       }
@@ -819,6 +910,8 @@
     linea.cantidad += 1;
     estado.carrito.set(p.id, linea);
     actualizarCarrito();
+    const unidades = [...estado.carrito.values()].reduce((suma, l) => suma + l.cantidad, 0);
+    anunciar(`${p.nombre}: ${linea.cantidad} en el carrito. ${unidades} ${unidades === 1 ? 'unidad' : 'unidades'} en total.`);
   }
 
   function totalCarrito() {
@@ -880,7 +973,14 @@
     $('#form-carrito').vendedor.focus();
   });
 
-  $('#btn-vaciar-carrito').addEventListener('click', vaciarCarrito);
+  $('#btn-vaciar-carrito').addEventListener('click', () => {
+    const antes = new Map([...estado.carrito].map(([id, linea]) => [id, { ...linea }]));
+    vaciarCarrito();
+    toast('Carrito vaciado', 'ok', {
+      texto: 'Deshacer',
+      alHacer: () => { estado.carrito = antes; aplicarBusqueda({ conservarPagina: true }); toast('Carrito recuperado'); },
+    });
+  });
 
   $('#form-carrito').addEventListener('submit', (e) => {
     e.preventDefault();
@@ -888,7 +988,7 @@
     if (!estado.carrito.size) return;
     if (!form.vendedor.value.trim()) {
       form.vendedor.focus();
-      return mostrarError('#carrito-error', 'Escribe tu código de vendedor.');
+      return mostrarError('#carrito-error', 'Escribe tu código de vendedor.', 'vendedor');
     }
 
     conBotonOcupado(form, async () => {
@@ -896,7 +996,7 @@
       const items = [...estado.carrito.values()].map((l) => ({ producto_id: l.producto.id, cantidad: l.cantidad }));
       const r = await llamar('registrar_venta_multiple', { p_items: items, p_codigo_vendedor: form.vendedor.value.trim() });
       if (!r.ok) {
-        mostrarError('#carrito-error', r.error);
+        mostrarError('#carrito-error', r.error, r.campo);
         if (r.motivo === 'dia_cerrado') cargarEstadoDia();
         if (r.campo === 'codigo') form.vendedor.select();
         // Alguien más vendió o el producto cambió: ajustar el carrito a lo que hay.
@@ -1214,14 +1314,14 @@
     if (!(n >= 1)) return mostrarError('#mov-error', 'La cantidad debe ser un número entero, 1 o mayor.');
     if (tipo === 'salida' && n > p.cantidad) return mostrarError('#mov-error', `Solo hay ${fmtNumero.format(p.cantidad)} unidades.`);
     if (form.motivo.value.trim().length < 3) { form.motivo.focus(); return mostrarError('#mov-error', 'Escribe el motivo del movimiento.'); }
-    if (!esJefe() && !form.clave.value) { form.clave.focus(); return mostrarError('#mov-error', 'Falta la clave del jefe.'); }
+    if (!esJefe() && !form.clave.value) { form.clave.focus(); return mostrarError('#mov-error', 'Falta la clave del jefe.', 'clave'); }
 
     conBotonOcupado(form, async () => {
       const r = await llamar('registrar_movimiento', {
         p_producto_id: p.id, p_tipo: tipo, p_cantidad: n, p_motivo: form.motivo.value.trim(), p_clave_jefe: form.clave.value,
       });
       if (!r.ok) {
-        mostrarError('#mov-error', r.error);
+        mostrarError('#mov-error', r.error, r.campo);
         if (r.campo === 'clave') { form.clave.value = ''; form.clave.focus(); }
         return;
       }
@@ -1291,7 +1391,7 @@
     const r = await llamar('cambiar_precios_masivo', { ...datos, p_simular: true, p_clave_jefe: null });
     boton.disabled = false;
     if (!r.ok) {
-      mostrarError('#precios-error', r.error);
+      mostrarError('#precios-error', r.error, r.campo);
       if (r.filas) { pintarFilasPrecios(r.filas.filter((p) => Number(p.despues) <= 0)); $('#precios-vista').hidden = false; $('#precios-resumen').textContent = 'Estos productos quedarían sin precio:'; }
       return;
     }
@@ -1309,12 +1409,12 @@
     const form = e.currentTarget;
     if (!esJefe() && estado.precioRequiereClave && !form.clave.value) {
       form.clave.focus();
-      return mostrarError('#precios-error', 'Falta la clave del jefe.');
+      return mostrarError('#precios-error', 'Falta la clave del jefe.', 'clave');
     }
     conBotonOcupado(form, async () => {
       const r = await llamar('cambiar_precios_masivo', { ...datosPreciosBloque(), p_simular: false, p_clave_jefe: form.clave.value || null });
       form.clave.value = '';
-      if (!r.ok) { mostrarError('#precios-error', r.error); return; }
+      if (!r.ok) { mostrarError('#precios-error', r.error, r.campo); return; }
       $('#dlg-precios').close();
       toast(`Precios actualizados: ${r.cambiados} ${r.cambiados === 1 ? 'producto' : 'productos'}`);
       sincronizarInventario();
@@ -1352,7 +1452,7 @@
     conBotonOcupado(form, async () => {
       const r = await llamar('cerrar_dia', { p_fecha: fechaCerrando, p_codigo: form.codigo.value.trim() });
       form.codigo.value = '';
-      if (!r.ok) { mostrarError('#cierre-dlg-error', r.error); form.codigo.focus(); return; }
+      if (!r.ok) { mostrarError('#cierre-dlg-error', r.error, r.campo); form.codigo.focus(); return; }
 
       const c = r.cierre;
       const t = c.totales;
@@ -1556,7 +1656,7 @@
   $('#form-importar').addEventListener('submit', (e) => {
     e.preventDefault();
     const form = e.currentTarget;
-    if (!esJefe() && !form.clave.value) { form.clave.focus(); return mostrarError('#importar-error', 'Falta la clave del jefe.'); }
+    if (!esJefe() && !form.clave.value) { form.clave.focus(); return mostrarError('#importar-error', 'Falta la clave del jefe.', 'clave'); }
 
     conBotonOcupado(form, async () => {
       const filas = filasImportar.map(({ fila, codigo, nombre, descripcion, categoria, cantidad, precio }) =>
@@ -1624,7 +1724,7 @@
     if (!nombre) return mostrarError('#categoria-error', 'Escribe el nombre de la categoría.');
     conBotonOcupado(form, async () => {
       const r = await llamar('config_guardar_categoria', { p_prefijo_anterior: categoriaEditando?.prefijo ?? null, p_prefijo: prefijo, p_nombre: nombre });
-      if (!r.ok) return mostrarError('#categoria-error', r.error);
+      if (!r.ok) return mostrarError('#categoria-error', r.error, r.campo);
       toast(categoriaEditando ? `Categoría ${nombre} actualizada` : `Categoría ${prefijo} · ${nombre} creada`);
       pintarCategoriasConfig(r.categorias);
       editarCategoria(null);
@@ -1693,7 +1793,7 @@
         p_codigo: codigo || null, p_activo: vendedorEditando ? form.activo.checked : true,
         p_puede_cerrar: form.puede_cerrar.checked,
       });
-      if (!r.ok) return mostrarError('#vendedor-error', r.error);
+      if (!r.ok) return mostrarError('#vendedor-error', r.error, r.campo);
       toast(vendedorEditando ? `Vendedor ${nombre} actualizado` : `Vendedor ${nombre} creado`);
       pintarVendedores(r.vendedores);
       editarVendedor(null);
@@ -1708,7 +1808,7 @@
 
     conBotonOcupado(form, async () => {
       const r = await llamar('config_definir_clave_jefe', { p_clave_nueva: form.nueva.value });
-      if (!r.ok) return mostrarError('#clave-jefe-error', r.error);
+      if (!r.ok) return mostrarError('#clave-jefe-error', r.error, r.campo);
       form.reset();
       mostrarError('#clave-jefe-error', '');
       pintarEstadoClave(true);
@@ -2182,14 +2282,14 @@
   $('#form-anular').addEventListener('submit', (e) => {
     e.preventDefault();
     const form = e.currentTarget;
-    if (!esJefe() && !form.clave.value) return mostrarError('#anular-error', 'Falta la clave del jefe.');
+    if (!esJefe() && !form.clave.value) { form.clave.focus(); return mostrarError('#anular-error', 'Falta la clave del jefe.', 'clave'); }
     conBotonOcupado(form, async () => {
       const r = ticketAnulando
         ? await llamar('anular_ticket', { p_ticket: ticketAnulando.ticket, p_clave_jefe: form.clave.value || null })
         : await llamar('anular_venta', { p_venta_id: ventaAnulando.id, p_clave_jefe: form.clave.value || null });
       form.clave.value = '';
       if (!r.ok) {
-        mostrarError('#anular-error', r.error);
+        mostrarError('#anular-error', r.error, r.campo);
         form.clave.focus();
         return;
       }

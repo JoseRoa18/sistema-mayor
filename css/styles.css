@@ -822,3 +822,105 @@ body[data-rol="atencion"] .btn-vender { height: 46px; min-width: 110px; padding:
 @media (max-width: 420px) {
   .barra-marca span:last-child { display: none; }   /* queda solo el logo */
 }
+
+/* ================================================================
+   Revisión de UI/UX (UI UX Pro Max): accesibilidad, uso táctil y estados.
+   Va al final para tener prioridad sin cambiar el diseño de arriba.
+   ================================================================ */
+
+/* El foco del teclado no queda escondido debajo de la barra fija de arriba ni de la del carrito */
+html { scroll-padding-top: 76px; }
+html:has(body.con-carrito) { scroll-padding-bottom: 112px; }
+
+/* Pantallas de carga e inicio: alto real de la pantalla en el celular (sin la barra del navegador) */
+.cargando, .login { min-height: 100vh; min-height: 100dvh; }
+
+/* "Saltar al contenido": aparece solo al llegar con Tab */
+.saltar {
+  position: absolute; left: 12px; top: -64px; z-index: 300;
+  padding: 10px 16px; border-radius: var(--radio-sm);
+  background: var(--primario); color: var(--primario-texto); font-weight: 700; text-decoration: none;
+  display: inline-flex; align-items: center; min-height: 44px;
+}
+.saltar:focus { top: 12px; }
+.contenido:focus { outline: none; }
+h1[tabindex="-1"]:focus { outline: none; }
+
+/* Anillo de foco visible en todo lo que se usa con el teclado */
+:where(a[href], button, summary, [tabindex]:not([tabindex="-1"])):focus-visible {
+  outline: 3px solid color-mix(in srgb, var(--primario) 55%, transparent); outline-offset: 2px;
+}
+
+/* Estados de los botones: desactivado, trabajando y al presionar */
+.btn:disabled { opacity: .5; cursor: not-allowed; }
+.btn[aria-busy="true"]:disabled { opacity: 1; cursor: progress; }
+.btn[aria-busy="true"] { position: relative; color: transparent !important; }
+.btn[aria-busy="true"]::after {
+  content: ''; position: absolute; left: 50%; top: 50%;
+  width: 16px; height: 16px; margin: -8px 0 0 -8px; border-radius: 50%;
+  border: 2px solid var(--giro, var(--texto)); border-right-color: transparent;
+  animation: girar .7s linear infinite;
+}
+.btn-primario { --giro: var(--primario-texto); }
+.btn-peligro { --giro: #fff; }
+.btn { transition: background-color .15s, border-color .15s, color .15s, opacity .15s, transform .1s ease-out; }
+.btn:active:not(:disabled) { transform: scale(.97); }
+
+/* Toque más rápido (sin la espera de doble toque) y manito en lo que se puede tocar */
+a, button, input, select, textarea, label, summary, .fila-clic { touch-action: manipulation; }
+select, .casilla, .segmentado label { cursor: pointer; }
+
+/* Campos: obligatorios con *, y el que tiene un error con borde rojo (además del mensaje) */
+.campo:has(input[required], select[required]) > span:first-child::after { content: ' *'; color: var(--peligro-texto-suave); }
+input[aria-invalid="true"], select[aria-invalid="true"], textarea[aria-invalid="true"] {
+  border-color: var(--peligro);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--peligro) 18%, transparent);
+}
+
+/* Contraseña con botón Mostrar / Ocultar */
+.campo > .campo-clave { position: relative; display: block; font-size: inherit; font-weight: inherit; color: inherit; }
+.campo-clave input { display: block; padding-right: 96px; }
+.login-card .btn-ver-clave { position: absolute; right: 6px; top: 50%; transform: translateY(-50%); margin: 0; height: 36px; }
+.btn-ver-clave:active:not(:disabled) { transform: translateY(-50%) scale(.97); }
+
+/* Objetivos de al menos 24 px (computador): números de venta, enlaces y casillas */
+.enlace-venta { display: inline-flex; align-items: center; justify-content: center; min-width: 24px; min-height: 24px; }
+.casilla { min-height: 28px; cursor: pointer; }
+input[type="checkbox"], input[type="radio"] { width: 18px; height: 18px; accent-color: var(--primario); cursor: pointer; }
+.segmentado input[type="radio"] { width: auto; height: auto; }
+
+/* Sin resultados: mensaje y botón para volver a ver todo */
+.vacio { display: flex; flex-direction: column; align-items: center; gap: 12px; }
+
+/* Números que cambian, alineados (no "bailan") */
+.kpi-valor, .carrito-resumen span, .venta-total strong, #carrito-total, .ticket-numero { font-variant-numeric: tabular-nums; }
+
+/* Pantallas táctiles: objetivos de 44 px y separación cómoda */
+@media (pointer: coarse) {
+  .btn, .btn-sm, .pagina, .toast-accion { min-height: 44px; }
+  .btn-sm { padding: 0 14px; }
+  input:not([type="checkbox"]):not([type="radio"]), select { min-height: 44px; }
+  .btn-tema, .btn-icono { width: 44px; height: 44px; }
+  .pestana { min-height: 48px; }
+  .carrito-cantidad .btn, .paginacion-mini .btn { width: 44px; }
+  .carrito-cantidad { gap: 8px; }
+  .enlace-venta { min-width: 44px; min-height: 44px; }
+  .casilla { min-height: 44px; }
+  input[type="checkbox"] { width: 22px; height: 22px; }
+  .pagina { min-width: 44px; }
+  .col-acciones .btn + .btn { margin-left: 8px; }
+}
+
+/* Celular: letra de 16 px en los campos (evita que el teléfono haga zoom al escribir) */
+@media (max-width: 720px) {
+  input, select, textarea { font-size: 16px; }
+}
+
+/* Quien prefiere menos movimiento: sin animaciones ni transiciones */
+@media (prefers-reduced-motion: reduce) {
+  *, *::before, *::after {
+    animation-duration: .01ms !important; animation-iteration-count: 1 !important;
+    transition-duration: .01ms !important; scroll-behavior: auto !important;
+  }
+  .btn:active:not(:disabled) { transform: none; }
+}

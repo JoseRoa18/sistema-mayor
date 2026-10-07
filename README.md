@@ -281,6 +281,30 @@ o un periodo **personalizado** (desde – hasta). Las semanas empiezan el lunes.
 
 Mientras el periodo incluya el día de hoy, los datos se actualizan solos cada minuto.
 
+### Accesibilidad y uso con teclado o pantalla táctil
+
+Revisada con la guía de UI/UX "UI UX Pro Max" (normas WCAG 2.2 AA):
+
+- **Contraste** de todos los textos verificado en tema claro y oscuro (4,5:1 como mínimo).
+- **Tamaño de toque:** en pantallas táctiles todos los botones, campos y pestañas miden al menos
+  44 px; en el computador, ningún elemento clicable mide menos de 24 px.
+- **Teclado:** "Saltar al contenido" con la primera tecla Tab, anillo de foco visible en todo,
+  al cambiar de pestaña el foco va al título de la sección, y el foco nunca queda escondido
+  debajo de la barra de arriba ni de la del carrito.
+- **Errores en el campo:** cuando algo falla (código de vendedor, clave del jefe, contraseña…),
+  ese campo se marca en rojo y queda enlazado al mensaje; la marca se quita al corregirlo. Los
+  campos obligatorios llevan *.
+- **Botones que trabajan:** mientras se guarda, el botón muestra un indicador y no se puede tocar
+  dos veces.
+- **Vaciar el carrito se puede deshacer** desde el aviso que aparece.
+- **Lectores de pantalla:** cada ventana se anuncia con su título; se anuncia lo agregado al
+  carrito y cuántos productos encontró la búsqueda.
+- **Enlace por sección:** Reportes (`#reportes`), Administración y Configuración tienen su propia
+  dirección; al recargar la página se queda en la misma sección.
+- En el celular los campos usan letra de 16 px (el teléfono no hace zoom al escribir), y quien
+  tiene activado "reducir movimiento" en su equipo no ve animaciones.
+- Inicio de sesión con botón **Mostrar / Ocultar** contraseña.
+
 ### Tema claro y oscuro
 
 El botón de sol/luna (arriba, y también en la pantalla de inicio de sesión) permite elegir

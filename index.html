@@ -52,7 +52,10 @@
       </label>
       <label class="campo">
         <span>Contraseña</span>
-        <input name="clave" type="password" autocomplete="current-password" required>
+        <span class="campo-clave">
+          <input name="clave" type="password" autocomplete="current-password" required>
+          <button type="button" id="btn-ver-clave" class="btn btn-fantasma btn-sm btn-ver-clave" aria-pressed="false">Mostrar</button>
+        </span>
       </label>
 
       <p id="login-error" class="alerta alerta-error" role="alert" hidden></p>
@@ -63,6 +66,7 @@
 
   <!-- ============ APLICACIÓN ============ -->
   <div id="vista-app" hidden>
+    <a class="saltar" href="#contenido">Saltar al contenido</a>
     <header class="barra">
       <div class="barra-marca">
         <span class="logo logo-sm" aria-hidden="true">SM</span>
@@ -90,9 +94,10 @@
       <button type="button" class="pestana solo-jefe" data-seccion="configuracion">Configuración</button>
     </nav>
 
-    <main class="contenido">
+    <main id="contenido" class="contenido" tabindex="-1">
       <!-- ---------- Inventario ---------- -->
       <section id="seccion-inventario">
+        <h1 class="sr-only">Inventario de productos</h1>
       <section class="panel-superior">
         <div class="buscador">
           <svg viewBox="0 0 24 24" aria-hidden="true"><circle cx="11" cy="11" r="7"/><path d="m20 20-3.5-3.5"/></svg>
@@ -877,6 +882,7 @@
     </button>
   </div>
 
+  <div id="anuncio" class="sr-only" role="status" aria-live="polite" aria-atomic="true"></div>
   <div id="toast" class="toast" role="status" aria-live="polite" popover="manual" hidden></div>
 </body>
 </html>
