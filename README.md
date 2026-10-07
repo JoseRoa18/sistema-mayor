@@ -67,8 +67,8 @@ internamente el correo `admin@sistema-mayor.local`. También se puede escribir e
 
 ### Búsqueda
 
-Busca por **código**, nombre o descripción, sin importar mayúsculas ni tildes
-(`cafe` encuentra "Café"). Si se escriben varias palabras, deben aparecer todas
+Busca por **código**, nombre o descripción, sin importar mayúsculas, tildes ni guiones
+(`cafe` encuentra "Café"; `v3013` encuentra "V-3013" y al revés). Si se escriben varias palabras, deben aparecer todas
 (`nevera plata` encuentra "Nevera Samsung — color plata").
 
 - Primero aparece el producto cuyo código es **exactamente** el buscado, luego los

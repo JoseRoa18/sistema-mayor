@@ -244,8 +244,9 @@ create trigger configuracion_actualizada
   before update on public.configuracion
   for each row execute function public.tocar_configuracion();
 
--- Búsqueda por código, nombre o descripción, sin importar mayúsculas ni
--- tildes ("cafe" encuentra "Café"). Cada palabra escrita debe aparecer.
+-- Búsqueda por código, nombre o descripción, sin importar mayúsculas, tildes
+-- ni guiones ("cafe" encuentra "Café"; "v3013" encuentra "V-3013" y al revés).
+-- Cada palabra escrita debe aparecer.
 -- Primero salen los productos cuyo código es exactamente el buscado,
 -- luego los que empiezan por él, y después el resto por nombre.
 -- Corre con los permisos de quien llama, así que respeta RLS.
@@ -255,17 +256,22 @@ language sql
 stable
 set search_path = public, extensions
 as $$
+  -- translate(…, '-–—', '') quita el guion, el guion largo y la raya.
+  with buscado as (
+    select translate(upper(trim(coalesce(q, ''))), '-–—', '') as codigo
+  )
   select p.*
-  from public.productos p
+  from public.productos p, buscado b
   where not exists (
     select 1
     from unnest(regexp_split_to_array(unaccent(lower(coalesce(q, ''))), '\s+')) as palabra
-    where palabra <> ''
-      and strpos(unaccent(lower(coalesce(p.codigo, '') || ' ' || p.nombre || ' ' || p.descripcion)), palabra) = 0
+    where translate(palabra, '-–—', '') <> ''
+      and strpos(translate(unaccent(lower(coalesce(p.codigo, '') || ' ' || p.nombre || ' ' || p.descripcion)), '-–—', ''),
+                 translate(palabra, '-–—', '')) = 0
   )
   order by
-    coalesce(p.codigo = upper(trim(q)), false) desc,
-    coalesce(trim(q) <> '' and starts_with(p.codigo, upper(trim(q))), false) desc,
+    coalesce(translate(p.codigo, '-–—', '') = b.codigo, false) desc,
+    coalesce(b.codigo <> '' and starts_with(translate(p.codigo, '-–—', ''), b.codigo), false) desc,
     p.nombre
   limit 300
 $$;
