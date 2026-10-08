@@ -992,9 +992,12 @@ window.Exportar = (function () {
         fontStyle: 'bold', textColor: rgb(PAPEL.negro), lineColor: rgb(PAPEL.negro),
         lineWidth: { top: 0.7, bottom: 0.4 }, cellPadding: { top: 6, bottom: 4, left: 4, right: 4 },
       };
-      const cuerpo = [];
-      const grises = new Set();   // filas anuladas (en gris y cursiva; no suman)
+      const CABECERA = [['Código', 'Cant.', 'Unid.', 'Precio', 'Descripción', 'Subtotal']];
+      const altoPagina = doc.internal.pageSize.getHeight();
+      let primeraDeLaPagina = true;
       for (const t of tickets) {
+        const cuerpo = [];
+        const grises = new Set();   // filas anuladas (en gris y cursiva; no suman)
         const vigentes = t.lineas.filter((l) => !l.anulada_en);
         const total = vigentes.reduce((s, l) => s + Number(l.total), 0);
         const unidades = vigentes.reduce((s, l) => s + l.cantidad, 0);
@@ -1016,19 +1019,30 @@ window.Exportar = (function () {
           colSpan: 6,
           styles: { fontSize: 7.5, textColor: rgb(PAPEL.gris), halign: 'right', lineWidth: 0, cellPadding: { top: 2, bottom: 9, left: 4, right: 4 } },
         }]);
+        // Encabezado del ticket + hasta 3 productos + su resumen deben caber; si no, a la página siguiente.
+        const minimo = 26 + Math.min(t.lineas.length, 3) * 19 + 22;
+        if (w.y + minimo > altoPagina - 50) {
+          doc.addPage();
+          w.y = 70;
+          primeraDeLaPagina = true;
+        }
+        w.tabla({
+          // Los títulos de las columnas, arriba de cada página (no repetidos entre tickets)
+          head: primeraDeLaPagina ? CABECERA : undefined,
+          body: cuerpo,
+          columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 36 }, 2: { cellWidth: 32 }, 3: { cellWidth: 72 }, 5: { cellWidth: 76 } },
+          didParseCell: (d) => {
+            if ([1, 3, 5].includes(d.column.index) && d.cell.colSpan === 1) d.cell.styles.halign = 'right';
+            if (d.section === 'body' && grises.has(d.row.index)) {
+              d.cell.styles.textColor = rgb(PAPEL.suave);
+              d.cell.styles.fontStyle = 'italic';
+            }
+          },
+        });
+        w.y = doc.lastAutoTable.finalY + 2;   // los tickets van seguidos
+        primeraDeLaPagina = false;
       }
-      w.tabla({
-        head: [['Código', 'Cant.', 'Unid.', 'Precio', 'Descripción', 'Subtotal']],
-        body: cuerpo,
-        columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 36 }, 2: { cellWidth: 32 }, 3: { cellWidth: 72 }, 5: { cellWidth: 76 } },
-        didParseCell: (d) => {
-          if ([1, 3, 5].includes(d.column.index) && d.cell.colSpan === 1) d.cell.styles.halign = 'right';
-          if (d.section === 'body' && grises.has(d.row.index)) {
-            d.cell.styles.textColor = rgb(PAPEL.suave);
-            d.cell.styles.fontStyle = 'italic';
-          }
-        },
-      });
+      w.y += 18;
     }
 
     w.titulo('Total general');
