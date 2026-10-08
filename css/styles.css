@@ -988,3 +988,49 @@ body[data-rol="atencion"] .btn-quitar { width: 46px; height: 46px; font-size: 24
 .producto-categoria[data-color="indigo"]  { background: var(--cat-indigo-fondo);  color: var(--cat-indigo-texto); }
 .producto-categoria[data-color="piedra"]  { background: var(--cat-piedra-fondo);  color: var(--cat-piedra-texto); }
 .vendedor-nombre .producto-categoria { margin-top: 0; font-size: 13px; }
+
+/* ================================================================
+   Orden de los botones y paginación de las tarjetas de Reportes
+   ================================================================ */
+
+/* Inventario, fila 1: herramientas a la izquierda y "+ Nuevo producto" a la derecha */
+.barra-acciones { display: flex; flex-wrap: wrap; align-items: center; justify-content: space-between; gap: 8px; margin-bottom: 14px; }
+/* Fila 2: categoría y conteo a la izquierda, flechas de página a la derecha */
+.encabezado-lista { flex-wrap: nowrap; }
+.encabezado-lista .filtros-lista { flex: 1; }
+.conteo { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+
+/* Producto agotado: sin caja vacía en la columna de botones (la cantidad ya lo dice) */
+.btn-vender:disabled { background: transparent; border-color: transparent; color: var(--texto-3); font-weight: 500; opacity: 1; }
+
+/* Reportes: el periodo junto al título y las descargas, todas iguales, en su propia fila */
+.reporte-descargas { display: flex; flex-wrap: wrap; align-items: center; gap: 8px; margin: -6px 0 18px; }
+.reporte-descargas-titulo { margin-right: 4px; font-size: 13px; font-weight: 600; color: var(--texto-3); }
+/* Cada tarjeta con su propio alto (no se estira para igualar a la de al lado) */
+.cierre-columnas { align-items: start; }
+
+/* Paginación al pie de cada tarjeta: "11–20 de 516   ‹ 2 / 52 ›" */
+.paginacion-tarjeta {
+  display: flex; align-items: center; justify-content: flex-end; gap: 8px;
+  margin-top: 4px; padding: 10px 0 8px; border-top: 1px solid var(--borde);
+}
+.paginacion-tarjeta-texto { margin-right: auto; font-size: 13px; color: var(--texto-3); font-variant-numeric: tabular-nums; }
+.paginacion-tarjeta-pagina { min-width: 56px; text-align: center; font-size: 13px; font-weight: 600; color: var(--texto-2); font-variant-numeric: tabular-nums; }
+.paginacion-tarjeta .btn { width: 32px; padding: 0; font-size: 18px; line-height: 1; }
+@media (pointer: coarse) { .paginacion-tarjeta .btn { width: 44px; } }
+
+@media (max-width: 720px) {
+  /* Inventario: herramientas en dos columnas y "+ Nuevo producto" a todo el ancho */
+  .barra-acciones { display: grid; grid-template-columns: 1fr 1fr; }
+  .barra-acciones .acciones-lista { display: contents; }
+  .barra-acciones #btn-nuevo { grid-column: 1 / -1; }
+  /* Categoría a todo el ancho; debajo, el conteo y las flechas */
+  .encabezado-lista { display: grid; grid-template-columns: 1fr auto; align-items: center; gap: 8px; }
+  .encabezado-lista .filtros-lista { display: contents; }
+  .encabezado-lista select { grid-column: 1 / -1; }
+  /* Reportes: descargas en dos columnas */
+  .reporte-descargas { display: grid; grid-template-columns: 1fr 1fr; margin-top: -10px; }
+  .reporte-descargas-titulo { grid-column: 1 / -1; }
+}
+/* Si una fila de tarjetas queda con una sola, esa ocupa todo el ancho (sin hueco al lado) */
+.cierre-columnas > .tarjeta:last-child:nth-child(odd) { grid-column: 1 / -1; }

@@ -115,24 +115,27 @@
         </div>
       </section>
 
+      <div class="barra-acciones">
+        <div class="acciones-lista">
+          <button id="btn-lista-precios" type="button" class="btn btn-secundario" title="Descargar la lista de precios en PDF">Lista de precios</button>
+          <button id="btn-cerrar-dia" type="button" class="btn btn-secundario">Cerrar el día</button>
+          <button id="btn-precios-bloque" type="button" class="btn btn-secundario solo-admin">Precios en bloque</button>
+          <button id="btn-importar" type="button" class="btn btn-secundario solo-admin">Importar Excel</button>
+        </div>
+        <button id="btn-nuevo" type="button" class="btn btn-primario solo-admin">+ Nuevo producto</button>
+      </div>
+
       <div class="encabezado-lista">
         <div class="filtros-lista">
           <select id="filtro-categoria" aria-label="Filtrar por categoría">
             <option value="">Todas las categorías</option>
           </select>
           <p id="conteo" class="conteo"></p>
-          <span id="paginacion-mini" class="paginacion-mini" hidden>
-            <button id="mini-anterior" type="button" class="btn btn-secundario btn-sm" aria-label="Página anterior" title="Página anterior (Re Pág)">‹</button>
-            <button id="mini-siguiente" type="button" class="btn btn-secundario btn-sm" aria-label="Página siguiente" title="Página siguiente (Av Pág)">›</button>
-          </span>
         </div>
-        <div class="acciones-lista">
-          <button id="btn-lista-precios" type="button" class="btn btn-secundario" title="Descargar la lista de precios en PDF">Lista de precios</button>
-          <button id="btn-cerrar-dia" type="button" class="btn btn-secundario">Cerrar el día</button>
-          <button id="btn-precios-bloque" type="button" class="btn btn-secundario solo-admin">Precios en bloque</button>
-          <button id="btn-importar" type="button" class="btn btn-secundario solo-admin">Importar Excel</button>
-          <button id="btn-nuevo" type="button" class="btn btn-primario solo-admin">+ Nuevo producto</button>
-        </div>
+        <span id="paginacion-mini" class="paginacion-mini" hidden>
+          <button id="mini-anterior" type="button" class="btn btn-secundario btn-sm" aria-label="Página anterior" title="Página anterior (Re Pág)">‹</button>
+          <button id="mini-siguiente" type="button" class="btn btn-secundario btn-sm" aria-label="Página siguiente" title="Página siguiente (Av Pág)">›</button>
+        </span>
       </div>
 
       <p id="aviso-dia-cerrado" class="alerta alerta-aviso" hidden></p>
@@ -187,11 +190,15 @@
               <input id="reporte-hasta" type="date" aria-label="Hasta">
             </span>
             <button id="btn-actualizar" type="button" class="btn btn-secundario">Actualizar</button>
-            <button id="btn-excel" type="button" class="btn btn-secundario">Excel detallado</button>
-            <button id="btn-pdf-detallado" type="button" class="btn btn-secundario" title="Cada ticket con sus productos, total general y firmas (para imprimir)">Auditoría de caja</button>
-            <button id="btn-pdf-ajustes" type="button" class="btn btn-secundario" title="Entradas y salidas de mercancía, con firma de quien autoriza (para imprimir)">Ajustes de inventario</button>
-            <button id="btn-pdf" type="button" class="btn btn-primario">PDF resumen</button>
           </div>
+        </div>
+
+        <div class="reporte-descargas" role="group" aria-labelledby="reporte-descargas-titulo">
+          <span id="reporte-descargas-titulo" class="reporte-descargas-titulo">Descargar</span>
+          <button id="btn-pdf" type="button" class="btn btn-secundario" title="Resumen de una página: indicadores, vendedores, más vendidos y por agotarse">PDF resumen</button>
+          <button id="btn-pdf-detallado" type="button" class="btn btn-secundario" title="Cada ticket con sus productos, total general y firmas (para imprimir)">Auditoría de caja</button>
+          <button id="btn-pdf-ajustes" type="button" class="btn btn-secundario" title="Entradas y salidas de mercancía, con firma de quien autoriza (para imprimir)">Ajustes de inventario</button>
+          <button id="btn-excel" type="button" class="btn btn-secundario" title="Todo el detalle del periodo en Excel">Excel detallado</button>
         </div>
 
         <div id="estado-dia" class="estado-dia" hidden>

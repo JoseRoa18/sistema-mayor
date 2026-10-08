@@ -1934,10 +1934,11 @@
       $('#reporte-hasta').value = cierre.hasta;
     }
     $('#reporte-fechas').hidden = !personalizado;
+    paginasReporte.clear();
     cargarCierre();
   });
-  $('#reporte-desde').addEventListener('change', cargarCierre);
-  $('#reporte-hasta').addEventListener('change', cargarCierre);
+  $('#reporte-desde').addEventListener('change', () => { paginasReporte.clear(); cargarCierre(); });
+  $('#reporte-hasta').addEventListener('change', () => { paginasReporte.clear(); cargarCierre(); });
   $('#btn-actualizar').addEventListener('click', cargarCierre);
 
   // Las líneas de una misma venta (carrito) comparten número; las antiguas cuentan solas.
@@ -2051,6 +2052,45 @@
     return el('td', clase ? { class: clase } : {}, texto);
   }
 
+  // ---------------- Tablas de Reportes: de a 10 filas, con su paginación ----------------
+  const POR_PAGINA_REPORTE = 10;
+  const paginasReporte = new Map();   // id de la tabla → página que se está viendo
+
+  // La página se conserva cuando el reporte se actualiza solo; con otro periodo vuelve a la 1.
+  function pintarTablaReporte(id, datos, fila, enfocar = null) {
+    const cuerpo = $(`#${id}`);
+    const total = datos.length;
+    const paginas = Math.max(1, Math.ceil(total / POR_PAGINA_REPORTE));
+    const pagina = Math.min(paginasReporte.get(id) || 1, paginas);
+    paginasReporte.set(id, pagina);
+    const inicio = (pagina - 1) * POR_PAGINA_REPORTE;
+    cuerpo.replaceChildren(...datos.slice(inicio, inicio + POR_PAGINA_REPORTE).map(fila));
+
+    // Paginación al pie de la tarjeta: "11–20 de 516   ‹  2 / 52  ›"
+    const tarjeta = cuerpo.closest('.tarjeta');
+    let nav = tarjeta.querySelector(':scope > .paginacion-tarjeta');
+    if (!nav) {
+      nav = el('nav', { class: 'paginacion-tarjeta', 'aria-label': `Páginas de ${tarjeta.querySelector('h2')?.textContent || 'la tabla'}` });
+      tarjeta.append(nav);
+    }
+    nav.hidden = paginas <= 1;
+    if (paginas <= 1) { nav.replaceChildren(); return; }
+    const boton = (direccion, texto, etiqueta, destino, desactivado) => el('button', {
+      type: 'button', class: 'btn btn-secundario btn-sm', 'aria-label': etiqueta, title: etiqueta, 'data-direccion': direccion,
+      ...(desactivado ? { disabled: '' } : {}),
+      onclick: () => { paginasReporte.set(id, destino); pintarTablaReporte(id, datos, fila, direccion); },
+    }, texto);
+    nav.replaceChildren(
+      el('span', { class: 'paginacion-tarjeta-texto' },
+        `${fmtNumero.format(inicio + 1)}–${fmtNumero.format(Math.min(inicio + POR_PAGINA_REPORTE, total))} de ${fmtNumero.format(total)}`),
+      boton('anterior', '‹', 'Página anterior', pagina - 1, pagina <= 1),
+      el('span', { class: 'paginacion-tarjeta-pagina' }, `${pagina} / ${paginas}`),
+      boton('siguiente', '›', 'Página siguiente', pagina + 1, pagina >= paginas),
+    );
+    // Con el teclado, el foco sigue en la flecha (o pasa a la otra si esta quedó desactivada).
+    if (enfocar) (nav.querySelector(`[data-direccion="${enfocar}"]:not(:disabled)`) || nav.querySelector('button:not(:disabled)'))?.focus();
+  }
+
   function pintarCierre() {
     const c = cierre;
     const hoy = hoyEnZona();
@@ -2077,54 +2117,54 @@
     $('#umbral-agotarse').textContent = fmtNumero.format(c.stockBajo);
 
     $('#tarjeta-por-dia').hidden = c.unDia;
-    $('#tabla-por-dia').replaceChildren(...c.porDia.map((d) => el('tr', {},
+    pintarTablaReporte('tabla-por-dia', c.porDia, (d) => el('tr', {},
       celda(fmtDiaLargo.format(aFecha(d.fecha))),
       celda(fmtNumero.format(d.ventas), 'num'),
       celda(fmtNumero.format(d.unidades), 'num'),
       celda(fmtCOP.format(d.total), 'num'),
-    )));
+    ));
 
-    $('#tabla-top').replaceChildren(...c.porProducto.map((p) => el('tr', {},
+    pintarTablaReporte('tabla-top', c.porProducto, (p) => el('tr', {},
       celda(p.codigo ? el('span', { class: 'codigo codigo-sm' }, p.codigo) : '—'),
       celda(p.nombre),
       celda(fmtNumero.format(p.unidades), 'num'),
       celda(fmtCOP.format(p.total), 'num'),
-    )));
+    ));
     $('#vacio-top').hidden = c.porProducto.length > 0;
 
-    $('#tabla-vendedores').replaceChildren(...c.porVendedor.map((v) => el('tr', {},
+    pintarTablaReporte('tabla-vendedores', c.porVendedor, (v) => el('tr', {},
       celda(v.vendedor),
       celda(fmtNumero.format(v.ventas), 'num'),
       celda(fmtNumero.format(v.unidades), 'num'),
       celda(fmtCOP.format(v.total), 'num'),
-    )));
+    ));
     $('#vacio-vendedores').hidden = c.porVendedor.length > 0;
 
-    $('#tabla-movimientos').replaceChildren(...c.movimientos.map((m) => el('tr', {},
+    pintarTablaReporte('tabla-movimientos', c.movimientos, (m) => el('tr', {},
       celda(cuando(m.creado_en), 'nowrap'),
       celda(el('div', {}, m.codigo ? el('span', { class: 'codigo codigo-sm' }, m.codigo) : null, ` ${m.nombre}`)),
       celda(el('span', { class: `mov mov-${m.tipo}` }, `${m.tipo === 'salida' ? '−' : '+'}${fmtNumero.format(m.cantidad)}`), 'num'),
       celda(`${m.tipo === 'anulacion' ? 'Venta anulada' : m.motivo} · ${m.stock_antes ?? '—'} → ${m.stock_despues ?? '—'}`),
-    )));
+    ));
     $('#vacio-movimientos').hidden = c.movimientos.length > 0;
 
-    $('#tabla-precios').replaceChildren(...c.cambiosPrecio.map((h) => el('tr', {},
+    pintarTablaReporte('tabla-precios', c.cambiosPrecio, (h) => el('tr', {},
       celda(cuando(h.creado_en), 'nowrap'),
       celda(el('div', {}, h.codigo ? el('span', { class: 'codigo codigo-sm' }, h.codigo) : null, ` ${h.nombre}`)),
       celda(h.precio_anterior == null ? '—' : fmtCOP.format(h.precio_anterior), 'num'),
       celda(el('strong', {}, fmtCOP.format(h.precio_nuevo)), 'num'),
       celda(`${h.usuario || '—'}${h.origen === 'importacion' ? ' (Excel)' : ''}`),
-    )));
+    ));
     $('#vacio-precios').hidden = c.cambiosPrecio.length > 0;
 
-    $('#tabla-agotarse').replaceChildren(...c.porAgotarse.map((p) => el('tr', {},
+    pintarTablaReporte('tabla-agotarse', c.porAgotarse, (p) => el('tr', {},
       celda(p.codigo ? el('span', { class: 'codigo codigo-sm' }, p.codigo) : '—'),
       celda(p.nombre),
       celda(etiquetaCantidad(p.cantidad), 'num'),
-    )));
+    ));
     $('#vacio-agotarse').hidden = c.porAgotarse.length > 0;
 
-    $('#tabla-carritos').replaceChildren(...c.porCarrito.map((g) => el('tr', { class: `fila-clic${g.estado === 'Anulada' ? ' anulada' : ''}`, onclick: () => abrirVentaNumero(g.ticket) },
+    pintarTablaReporte('tabla-carritos', c.porCarrito, (g) => el('tr', { class: `fila-clic${g.estado === 'Anulada' ? ' anulada' : ''}`, onclick: () => abrirVentaNumero(g.ticket) },
       celda(botonVenta(g.ticket, false, g.numero_dia), 'nowrap'),
       celda(String(g.ticket ?? '—'), 'nowrap'),
       celda(cuando(g.vendido_en), 'nowrap'),
@@ -2133,11 +2173,11 @@
       celda(fmtNumero.format(g.unidades), 'num'),
       celda(fmtCOP.format(g.total), 'num'),
       celda(g.estado === 'Completa' ? 'Completa' : el('span', { class: 'etiqueta-anulada' }, g.estado)),
-    )));
+    ));
     $('#vacio-carritos').hidden = c.porCarrito.length > 0;
 
     const diasCerrados = new Set(c.cierres.map((x) => x.fecha));
-    $('#tabla-ventas').replaceChildren(...c.ventas.map((v) => el('tr', v.anulada_en ? { class: 'anulada' } : {},
+    pintarTablaReporte('tabla-ventas', c.ventas, (v) => el('tr', v.anulada_en ? { class: 'anulada' } : {},
       celda(botonVenta(v.ticket, true, v.numero_dia), 'nowrap'),
       celda(cuando(v.vendido_en), 'nowrap'),
       celda(v.codigo ? el('span', { class: 'codigo codigo-sm' }, v.codigo) : '—'),
@@ -2151,7 +2191,7 @@
         : diasCerrados.has(diaEnZona(v.vendido_en))
           ? celda(el('span', { class: 'etiqueta-cierre', title: 'Para anular, el jefe debe reabrir ese día' }, 'Día cerrado'), 'col-acciones')
           : celda(el('button', { type: 'button', class: 'btn btn-peligro-suave btn-sm', onclick: () => abrirAnular(v) }, 'Anular'), 'col-acciones'),
-    )));
+    ));
     $('#vacio-ventas').hidden = c.ventas.length > 0;
   }
 
