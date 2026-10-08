@@ -1034,3 +1034,13 @@ body[data-rol="atencion"] .btn-quitar { width: 46px; height: 46px; font-size: 24
 }
 /* Si una fila de tarjetas queda con una sola, esa ocupa todo el ancho (sin hueco al lado) */
 .cierre-columnas > .tarjeta:last-child:nth-child(odd) { grid-column: 1 / -1; }
+
+/* Usuarios de la app (Configuración) */
+.tarjeta-usuarios { margin-top: 20px; }
+.tarjeta-usuarios .alerta-aviso { margin-top: 8px; }
+.fila-usuario { display: grid; grid-template-columns: 1fr 1.4fr 1fr; gap: 12px; }
+.acciones-usuario { display: flex; flex-wrap: nowrap; justify-content: flex-end; gap: 6px; }
+@media (max-width: 720px) {
+  .fila-usuario { grid-template-columns: 1fr; gap: 0; }
+  .acciones-usuario { flex-wrap: wrap; justify-content: flex-start; }
+}

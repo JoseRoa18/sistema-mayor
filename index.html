@@ -367,6 +367,57 @@
         <h1 class="cierre-titulo">Configuración</h1>
         <p class="cierre-subtitulo">Solo el jefe ve esta sección.</p>
 
+        <!-- Usuarios de la app: pasan por la función /api/usuarios de Vercel -->
+        <section id="tarjeta-usuarios" class="tarjeta config-tarjeta tarjeta-usuarios">
+          <h2>Usuarios de la app</h2>
+          <p class="tarjeta-nota">Quién puede entrar al sistema y con qué rol. Cada persona entra con su usuario y su contraseña; las contraseñas se guardan cifradas: nadie puede verlas, solo cambiarlas.</p>
+          <p id="usuarios-aviso" class="alerta alerta-aviso" hidden></p>
+          <div class="tabla-desplazable">
+            <table class="tabla-simple">
+              <thead><tr><th>Usuario</th><th>Nombre</th><th>Rol</th><th>Último ingreso</th><th>Acceso</th><th><span class="sr-only">Acciones</span></th></tr></thead>
+              <tbody id="usuarios-lista"></tbody>
+            </table>
+          </div>
+          <p id="usuarios-vacio" class="vacio-simple" hidden>Cargando usuarios…</p>
+
+          <form id="form-usuario-nuevo" class="bloque-jefe" novalidate>
+            <h3>Nuevo usuario</h3>
+            <div class="fila-usuario">
+              <label class="campo">
+                <span>Usuario</span>
+                <input name="usuario" maxlength="30" autocomplete="off" autocapitalize="none" spellcheck="false" placeholder="Ej: maria" required>
+              </label>
+              <label class="campo">
+                <span>Nombre</span>
+                <input name="nombre" maxlength="60" autocomplete="off" placeholder="Ej: María, caja 2" required>
+              </label>
+              <label class="campo">
+                <span>Rol</span>
+                <select name="rol" required>
+                    <option value="atencion">Atención al público</option>
+                    <option value="admin">Administración</option>
+                    <option value="jefe">Jefe</option>
+                </select>
+              </label>
+            </div>
+            <div class="fila-2">
+              <label class="campo">
+                <span>Contraseña</span>
+                <input name="clave" class="input-secreto" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+              </label>
+              <label class="campo">
+                <span>Repite la contraseña</span>
+                <input name="repetir" class="input-secreto" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+              </label>
+            </div>
+            <p class="ayuda">Mínimo 6 caracteres (mejor 8 o más). Entra con el usuario tal cual (por ejemplo "maria"). Dale la contraseña en privado.</p>
+            <p id="usuario-nuevo-error" class="alerta alerta-error" role="alert" hidden></p>
+            <div class="dialogo-acciones">
+              <button type="submit" class="btn btn-primario">Crear usuario</button>
+            </div>
+          </form>
+        </section>
+
         <div class="config-columnas">
           <section class="tarjeta config-tarjeta">
             <h2>Personal: vendedores y cierre</h2>
@@ -870,6 +921,51 @@
       <div class="dialogo-acciones">
         <button type="button" id="btn-impresora-imagen" class="btn btn-secundario accion-izquierda">Guardar o compartir imagen</button>
         <button type="button" class="btn btn-primario" data-cerrar>Listo</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ============ DIÁLOGO: CONTRASEÑA DE UN USUARIO ============ -->
+  <dialog id="dlg-usuario-clave" class="dialogo dialogo-sm">
+    <form id="form-usuario-clave" novalidate>
+      <h2 id="usuario-clave-titulo">Cambiar contraseña</h2>
+      <p id="usuario-clave-texto" class="ayuda"></p>
+      <label class="campo">
+        <span>Nueva contraseña</span>
+        <input name="clave" class="input-secreto" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      </label>
+      <label class="campo">
+        <span>Repite la contraseña</span>
+        <input name="repetir" class="input-secreto" autocomplete="off" autocapitalize="off" spellcheck="false" required>
+      </label>
+      <p id="usuario-clave-error" class="alerta alerta-error" role="alert" hidden></p>
+      <div class="dialogo-acciones">
+        <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+        <button type="submit" class="btn btn-primario">Guardar contraseña</button>
+      </div>
+    </form>
+  </dialog>
+
+  <!-- ============ DIÁLOGO: NOMBRE Y ROL DE UN USUARIO ============ -->
+  <dialog id="dlg-usuario" class="dialogo dialogo-sm">
+    <form id="form-usuario" novalidate>
+      <h2 id="usuario-titulo">Editar usuario</h2>
+      <label class="campo">
+        <span>Nombre</span>
+        <input name="nombre" maxlength="60" autocomplete="off" required>
+      </label>
+      <label class="campo">
+        <span>Rol</span>
+        <select name="rol" required>
+                    <option value="atencion">Atención al público</option>
+                    <option value="admin">Administración</option>
+                    <option value="jefe">Jefe</option>
+        </select>
+      </label>
+      <p id="usuario-error" class="alerta alerta-error" role="alert" hidden></p>
+      <div class="dialogo-acciones">
+        <button type="button" class="btn btn-fantasma" data-cerrar>Cancelar</button>
+        <button type="submit" class="btn btn-primario">Guardar</button>
       </div>
     </form>
   </dialog>

@@ -1745,7 +1745,190 @@
     pintarCategoriasConfig(r.categorias);
     editarVendedor(null);
     editarCategoria(null);
+    cargarUsuarios();
   }
+
+  // ---- Usuarios de la app (solo el jefe) ----
+  // Pasan por la función /api/usuarios de Vercel, que guarda la clave secreta de Supabase;
+  // el navegador solo envía la sesión del jefe.
+  const NOMBRE_ROL = { jefe: 'Jefe', admin: 'Administración', atencion: 'Atención al público' };
+  let usuariosApp = [];
+  let miIdUsuario = null;
+  let usuarioEditando = null;
+
+  async function usuariosApi(cuerpo) {
+    const { data } = await db.auth.getSession();
+    try {
+      const r = await fetch('/api/usuarios', {
+        method: 'POST',
+        headers: { 'Content-Type': 'application/json', Authorization: `Bearer ${data.session?.access_token || ''}` },
+        body: JSON.stringify(cuerpo),
+      });
+      const datos = await r.json().catch(() => null);
+      if (datos) return datos;
+      return {
+        ok: false,
+        error: r.status === 404 || r.status === 405 || r.status === 501
+          ? 'La gestión de usuarios funciona en la app publicada (Vercel), no en una copia local.'
+          : `El servidor respondió con un error (${r.status}). Vuelve a intentar.`,
+      };
+    } catch {
+      return { ok: false, error: 'No hay conexión con el servidor. Revisa internet y vuelve a intentar.' };
+    }
+  }
+
+  async function cargarUsuarios() {
+    $('#usuarios-aviso').hidden = true;
+    $('#usuarios-vacio').textContent = 'Cargando usuarios…';
+    $('#usuarios-vacio').hidden = false;
+    const r = await usuariosApi({ accion: 'listar' });
+    if (!r.ok) {
+      $('#usuarios-vacio').hidden = true;
+      $('#usuarios-aviso').textContent = r.error;
+      $('#usuarios-aviso').hidden = false;
+      $('#usuarios-lista').replaceChildren();
+      $('#form-usuario-nuevo').hidden = true;   // sin el servidor no se puede crear
+      return;
+    }
+    $('#form-usuario-nuevo').hidden = false;
+    pintarUsuarios(r);
+  }
+
+  function pintarUsuarios(r) {
+    usuariosApp = r.usuarios;
+    miIdUsuario = r.yo;
+    $('#usuarios-vacio').hidden = usuariosApp.length > 0;
+    $('#usuarios-vacio').textContent = 'Todavía no hay usuarios.';
+    $('#usuarios-lista').replaceChildren(...usuariosApp.map((u) => el('tr', u.sin_acceso ? { class: 'anulada' } : {},
+      celda(el('span', { class: 'codigo codigo-sm' }, u.usuario)),
+      celda(`${u.nombre || '—'}${u.id === miIdUsuario ? ' (tú)' : ''}`),
+      celda(u.rol ? NOMBRE_ROL[u.rol] : el('span', { class: 'etiqueta-anulada', title: 'Sin rol no puede ver nada' }, 'Sin rol')),
+      celda(u.ultimo_ingreso ? fmtFecha.format(new Date(u.ultimo_ingreso)) : 'Nunca', 'nowrap'),
+      celda(u.sin_acceso ? el('span', { class: 'etiqueta-anulada' }, 'Sin acceso') : el('span', { class: 'estado-vendedor activo' }, 'Puede entrar')),
+      celda(el('div', { class: 'acciones-usuario' },
+        el('button', { type: 'button', class: 'btn btn-secundario btn-sm', onclick: () => abrirClaveUsuario(u) }, 'Contraseña'),
+        el('button', { type: 'button', class: 'btn btn-secundario btn-sm', onclick: () => abrirEditarUsuario(u) }, 'Editar'),
+        u.id === miIdUsuario ? null : botonAccesoUsuario(u)), 'col-acciones'),
+    )));
+  }
+
+  // Quitar el acceso pide un segundo toque; devolverlo, no.
+  function botonAccesoUsuario(u) {
+    if (u.sin_acceso) {
+      return el('button', { type: 'button', class: 'btn btn-secundario btn-sm', onclick: (e) => cambiarAccesoUsuario(u, false, e.currentTarget) }, 'Devolver acceso');
+    }
+    return el('button', {
+      type: 'button',
+      class: 'btn btn-peligro-suave btn-sm',
+      onclick: (e) => {
+        const boton = e.currentTarget;
+        if (boton.dataset.confirmar !== '1') {
+          boton.dataset.confirmar = '1';
+          boton.textContent = '¿Seguro? Toca otra vez';
+          setTimeout(() => { if (boton.isConnected) { boton.dataset.confirmar = ''; boton.textContent = 'Quitar acceso'; } }, 4000);
+          return;
+        }
+        cambiarAccesoUsuario(u, true, boton);
+      },
+    }, 'Quitar acceso');
+  }
+
+  async function cambiarAccesoUsuario(u, quitar, boton) {
+    boton.disabled = true;
+    boton.setAttribute('aria-busy', 'true');
+    const r = await usuariosApi({ accion: 'acceso', id: u.id, quitar });
+    if (!r.ok) {
+      boton.disabled = false;
+      boton.removeAttribute('aria-busy');
+      toast(r.error, 'error');
+      return;
+    }
+    pintarUsuarios(r);
+    toast(quitar
+      ? `"${u.usuario}" ya no puede entrar (si tiene la app abierta, se le cierra en menos de una hora)`
+      : `"${u.usuario}" puede entrar de nuevo`);
+  }
+
+  $('#form-usuario-nuevo').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    mostrarError('#usuario-nuevo-error', '');
+    for (const campo of ['usuario', 'nombre', 'clave', 'repetir']) {
+      if (!form[campo].value.trim()) { form[campo].focus(); return mostrarError('#usuario-nuevo-error', 'Completa todos los campos.', campo); }
+    }
+    if (form.clave.value !== form.repetir.value) {
+      form.repetir.focus();
+      return mostrarError('#usuario-nuevo-error', 'Las dos contraseñas no coinciden.', 'repetir');
+    }
+    conBotonOcupado(form, async () => {
+      const usuario = form.usuario.value.trim().toLowerCase();
+      const r = await usuariosApi({ accion: 'crear', usuario, nombre: form.nombre.value.trim(), rol: form.rol.value, clave: form.clave.value });
+      if (!r.ok) {
+        mostrarError('#usuario-nuevo-error', r.error, r.campo);
+        form[r.campo]?.focus();
+        return;
+      }
+      form.reset();
+      pintarUsuarios(r);
+      toast(`Usuario "${usuario}" creado: ya puede entrar con su contraseña`);
+    });
+  });
+
+  function abrirClaveUsuario(u) {
+    usuarioEditando = u;
+    const form = $('#form-usuario-clave');
+    form.reset();
+    mostrarError('#usuario-clave-error', '');
+    $('#usuario-clave-titulo').textContent = u.id === miIdUsuario ? 'Cambiar mi contraseña' : `Contraseña de "${u.usuario}"`;
+    $('#usuario-clave-texto').textContent = u.id === miIdUsuario
+      ? 'La usarás desde la próxima vez que inicies sesión.'
+      : `${u.nombre || u.usuario} entrará con esta contraseña desde ahora. Dásela en privado.`;
+    $('#dlg-usuario-clave').showModal();
+    form.clave.focus();
+  }
+
+  $('#form-usuario-clave').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    mostrarError('#usuario-clave-error', '');
+    if (!form.clave.value) { form.clave.focus(); return mostrarError('#usuario-clave-error', 'Escribe la nueva contraseña.', 'clave'); }
+    if (form.clave.value !== form.repetir.value) { form.repetir.focus(); return mostrarError('#usuario-clave-error', 'Las dos contraseñas no coinciden.', 'repetir'); }
+    conBotonOcupado(form, async () => {
+      const r = await usuariosApi({ accion: 'contrasena', id: usuarioEditando.id, clave: form.clave.value });
+      form.reset();
+      if (!r.ok) { mostrarError('#usuario-clave-error', r.error, r.campo); form.clave.focus(); return; }
+      $('#dlg-usuario-clave').close();
+      pintarUsuarios(r);
+      toast(`Contraseña de "${usuarioEditando.usuario}" cambiada`);
+    });
+  });
+
+  function abrirEditarUsuario(u) {
+    usuarioEditando = u;
+    const form = $('#form-usuario');
+    mostrarError('#usuario-error', '');
+    $('#usuario-titulo').textContent = `Editar "${u.usuario}"`;
+    form.nombre.value = u.nombre || '';
+    form.rol.value = u.rol || 'atencion';
+    // El jefe no puede quitarse a sí mismo el rol de jefe.
+    form.rol.disabled = u.id === miIdUsuario;
+    $('#dlg-usuario').showModal();
+    form.nombre.focus();
+  }
+
+  $('#form-usuario').addEventListener('submit', (e) => {
+    e.preventDefault();
+    const form = e.currentTarget;
+    mostrarError('#usuario-error', '');
+    if (!form.nombre.value.trim()) { form.nombre.focus(); return mostrarError('#usuario-error', 'Escribe el nombre.', 'nombre'); }
+    conBotonOcupado(form, async () => {
+      const r = await usuariosApi({ accion: 'editar', id: usuarioEditando.id, nombre: form.nombre.value.trim(), rol: form.rol.value });
+      if (!r.ok) { mostrarError('#usuario-error', r.error, r.campo); return; }
+      $('#dlg-usuario').close();
+      pintarUsuarios(r);
+      toast(`"${usuarioEditando.usuario}" actualizado`);
+    });
+  });
 
   // ---- Categorías (letra + nombre) ----
   let categoriaEditando = null;

@@ -24,6 +24,7 @@ Precios en **pesos colombianos (COP)** con su equivalente en **dólares (USD)** 
 | Reportes (por día o por rango) y Excel/PDF         | ✅            | ✅            | ❌                  |
 | **Reabrir** un día cerrado                         | ✅            | ❌            | ❌                  |
 | **Configuración**: personal (vendedores y quién cierra el día), categorías, clave del jefe y si el precio pide clave | ✅ | ❌ | ❌ |
+| Crear usuarios, cambiar contraseñas, roles y acceso (Configuración → Usuarios de la app) | ✅ | ❌ | ❌ |
 
 Atención al público ve el precio en dólares ya calculado, pero no la tasa usada (tampoco en
 la lista de precios en PDF).
@@ -62,10 +63,11 @@ js/tema.js            Tema claro / oscuro / automático
 js/exportar.js        Reportes en Excel y PDF (resumen y detallado), PDF de cada venta,
                       lista de precios, plantilla e importación de Excel
 js/impresora.js       Tickets en la mini impresora térmica Bluetooth ("gatito")
+api/usuarios.js       Función de Vercel: usuarios de la app (solo el jefe)
 supabase/schema.sql   Tablas, permisos, búsqueda, ventas, cierres y clave del jefe
 ```
 
-No necesita instalación ni compilación: son archivos estáticos.
+No necesita instalación ni compilación: son archivos estáticos, más una función de Vercel (`api/usuarios.js`) para administrar los usuarios.
 
 ## Uso
 
@@ -342,14 +344,39 @@ pertenece cada venta y las fechas de los reportes. Se cambia en `js/config.js` (
 
 ## Administración de usuarios
 
-Los usuarios se gestionan desde el panel de Supabase.
+El **jefe** crea y administra los usuarios desde la app: **Configuración → Usuarios de la app**.
 
-**1. Crear el usuario:** *Authentication → Users → Add user → Create new user*
-- Email: `nombre@sistema-mayor.local` (o un correo real)
-- Contraseña
-- Marcar **Auto Confirm User**
+- **Crear un usuario:** usuario (por ejemplo `maria`; entra escribiendo solo eso), nombre, rol
+  (Atención al público, Administración o Jefe) y contraseña (mínimo 6 caracteres; mejor 8 o más).
+- **Contraseña:** cambiar la de cualquier usuario, también la propia. Nadie puede ver las
+  contraseñas (Supabase las guarda cifradas), solo cambiarlas.
+- **Editar:** nombre y rol. El jefe no puede quitarse a sí mismo el rol de jefe.
+- **Quitar acceso / Devolver acceso:** la persona deja de poder entrar (si tenía la app abierta,
+  se le cierra en menos de una hora). No se borra nada: se le puede devolver el acceso cuando se
+  quiera. El jefe no puede quitarse el acceso a sí mismo.
 
-**2. Asignarle un rol:** *SQL Editor*, cambiando el correo y el rol (`jefe`, `admin` o `atencion`):
+### Configuración (una sola vez)
+
+La app usa una función de Vercel (`api/usuarios.js`) con la **clave secreta** de Supabase. La
+clave vive solo en Vercel: nunca está en el código ni llega al navegador. En cada llamada la
+función comprueba que quien la usa haya iniciado sesión como jefe.
+
+1. En Supabase: *Project Settings → API Keys* → en **Secret keys**, **Create new secret key**
+   (por ejemplo "vercel-usuarios") y copiarla (empieza por `sb_secret_`).
+2. En Vercel: el proyecto → *Settings → Environment Variables* → **Add**:
+   nombre `SUPABASE_SECRET_KEY`, valor la clave copiada, para *Production* (y *Preview* si se usa).
+3. En Vercel: *Deployments* → el último → **Redeploy** (las variables se toman al publicar).
+
+Mientras falte la clave, la tarjeta de usuarios lo avisa y no deja crear.
+
+**Recomendado después:** como la clave antigua `service_role` se compartió por chat, en Supabase
+(*Project Settings → API Keys*) desactivar las **claves antiguas** (*legacy*) cuando la app use
+la clave pública nueva (`sb_publishable_…`) en `js/config.js`. Así la clave antigua deja de servir.
+
+### Desde el panel de Supabase (alternativa)
+
+También se puede hacer a mano: *Authentication → Users → Add user* (correo
+`nombre@sistema-mayor.local`, contraseña y **Auto Confirm User**) y luego, en *SQL Editor*:
 
 ```sql
 insert into public.perfiles (id, nombre, rol)
@@ -358,19 +385,6 @@ from auth.users where email = 'maria@sistema-mayor.local';
 ```
 
 Un usuario **sin rol asignado no puede ver nada**, aunque tenga contraseña.
-
-**Cambiar el rol de alguien:**
-
-```sql
-update public.perfiles set rol = 'admin'
-where id = (select id from auth.users where email = 'maria@sistema-mayor.local');
-```
-
-**Quitar el acceso:** eliminar el usuario en *Authentication → Users*
-(su rol se borra automáticamente).
-
-**Cambiar una contraseña:** *Authentication → Users → (usuario) → Reset password*,
-o eliminar y volver a crear el usuario.
 
 ## Base de datos
 
