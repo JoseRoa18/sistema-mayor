@@ -17,4 +17,7 @@ window.CONFIG = {
   // Zona horaria de todo el sistema: horas mostradas, qué ventas entran en
   // el cierre de cada día y fechas de los reportes. Caracas = UTC-4.
   ZONA_HORARIA: 'America/Caracas',
+
+  // Nombre de la tienda en el membrete de los reportes impresos (PDF).
+  NOMBRE_TIENDA: 'Comercial Primavera',
 };

@@ -484,54 +484,70 @@ window.Exportar = (function () {
   const rgb = (hex) => [0, 2, 4].map((i) => parseInt(hex.slice(i, i + 2), 16));
   const MARGEN = 40;
 
-  // Documento A4 con la franja de color del encabezado.
-  async function nuevoPdf(titulo, derecha, generado) {
+  // ---------------- Base de los PDF: para imprimir en blanco y negro ----------------
+  // Sin colores (solo negro y grises): rinde la tinta y cualquier impresora lo imprime bien.
+  const PAPEL = { negro: '000000', texto: '1A1A1A', gris: '595959', suave: '8C8C8C', linea: 'C8C8C8' };
+  const TIENDA = String(window.CONFIG.NOMBRE_TIENDA || 'Sistema Mayor').toUpperCase();
+  const ARRIBA = 104;   // donde empieza el contenido debajo del membrete
+
+  // Hoja carta con membrete: tienda, título y periodo a la izquierda; quién y cuándo, a la derecha.
+  async function nuevoPdf(titulo, subtitulo, generado) {
     await cargar('pdf');
-    const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'a4' });
+    const doc = new window.jspdf.jsPDF({ unit: 'pt', format: 'letter' });
     const ancho = doc.internal.pageSize.getWidth();
-    doc.setFillColor(...rgb(COLOR.primario));
-    doc.rect(0, 0, ancho, 78, 'F');
-    doc.setTextColor(255, 255, 255);
-    doc.setFont('helvetica', 'normal');
-    doc.setFontSize(10);
-    doc.text('SISTEMA MAYOR', MARGEN, 30);
+    doc.__titulo = titulo;
     doc.setFont('helvetica', 'bold');
-    doc.setFontSize(20);
-    doc.text(titulo, MARGEN, 56);
+    doc.setFontSize(8.5);
+    doc.setTextColor(...rgb(PAPEL.gris));
+    doc.text(TIENDA, MARGEN, 38, { charSpace: 0.8 });
+    doc.setFontSize(17);
+    doc.setTextColor(...rgb(PAPEL.negro));
+    doc.text(titulo, MARGEN, 60);
     doc.setFont('helvetica', 'normal');
-    doc.setFontSize(derecha.length > 32 ? 10 : 11);
-    doc.text(limpio(derecha), ancho - MARGEN, 56, { align: 'right' });
-    doc.setTextColor(...rgb(COLOR.gris));
-    doc.setFontSize(9);
-    doc.text(limpio(generado), MARGEN, 98);
+    doc.setFontSize(9.5);
+    doc.setTextColor(...rgb(PAPEL.texto));
+    doc.text(limpio(subtitulo), MARGEN, 76);
+    // A la derecha, un dato por renglón (vienen separados por " · ")
+    doc.setFontSize(8);
+    doc.setTextColor(...rgb(PAPEL.gris));
+    limpio(generado).split(' · ').slice(0, 4).forEach((r, i) => doc.text(r, ancho - MARGEN, 38 + i * 11.5, { align: 'right' }));
+    doc.setDrawColor(...rgb(PAPEL.negro));
+    doc.setLineWidth(1);
+    doc.line(MARGEN, 86, ancho - MARGEN, 86);
     return doc;
   }
 
+  // Tablas sobrias: sin rellenos; una raya negra bajo los títulos y rayas finas grises entre filas.
   const estiloTabla = {
-    theme: 'grid',
+    theme: 'plain',
     rowPageBreak: 'avoid',   // una fila nunca queda partida entre dos páginas
-    margin: { left: MARGEN, right: MARGEN, bottom: 50 },
-    styles: { font: 'helvetica', fontSize: 8.5, cellPadding: 4, lineColor: rgb(COLOR.borde), lineWidth: 0.5, textColor: rgb(COLOR.texto) },
-    headStyles: { fillColor: rgb(COLOR.texto), textColor: 255, fontStyle: 'bold' },
-    alternateRowStyles: { fillColor: rgb(COLOR.grisClaro) },
-    footStyles: { fillColor: rgb(COLOR.primarioClaro), textColor: rgb(COLOR.texto), fontStyle: 'bold' },
+    showFoot: 'lastPage',    // el total, solo al final (no al pie de cada página)
+    margin: { left: MARGEN, right: MARGEN, top: 62, bottom: 50 },   // arriba: espacio para el membrete corto
+    styles: {
+      font: 'helvetica', fontSize: 8.5, cellPadding: { top: 4, right: 4, bottom: 4, left: 4 },
+      textColor: rgb(PAPEL.texto), lineColor: rgb(PAPEL.linea), lineWidth: { bottom: 0.4 },
+    },
+    headStyles: { fontStyle: 'bold', fontSize: 8, textColor: rgb(PAPEL.negro), lineColor: rgb(PAPEL.negro), lineWidth: { bottom: 0.9 } },
+    footStyles: { fontStyle: 'bold', textColor: rgb(PAPEL.negro), lineColor: rgb(PAPEL.negro), lineWidth: { top: 0.9 } },
   };
 
-  // Escribe títulos y tablas uno debajo del otro, pasando de página si hace falta.
+  // Escribe títulos, tablas, notas y firmas uno debajo del otro, pasando de página si hace falta.
   function escritor(doc, yInicial) {
     let y = yInicial;
     const alto = doc.internal.pageSize.getHeight();
+    const ancho = doc.internal.pageSize.getWidth();
+    const nuevaPagina = (falta) => { if (y > alto - falta) { doc.addPage(); y = 70; } };
     return {
       titulo(texto, nota) {
-        if (y > alto - 110) { doc.addPage(); y = 50; }
-        doc.setTextColor(...rgb(COLOR.texto));
+        nuevaPagina(110);
+        doc.setTextColor(...rgb(PAPEL.negro));
         doc.setFont('helvetica', 'bold');
-        doc.setFontSize(11.5);
+        doc.setFontSize(11);
         doc.text(texto, MARGEN, y);
         if (nota) {
           doc.setFont('helvetica', 'normal');
           doc.setFontSize(8);
-          doc.setTextColor(...rgb(COLOR.gris));
+          doc.setTextColor(...rgb(PAPEL.gris));
           doc.text(limpio(nota), MARGEN, y + 12);
           y += 12;
         }
@@ -542,33 +558,68 @@ window.Exportar = (function () {
         y = doc.lastAutoTable.finalY + 20;
       },
       nota(texto, cursiva = true) {
-        if (y > alto - 70) { doc.addPage(); y = 50; }
+        nuevaPagina(70);
         doc.setFont('helvetica', cursiva ? 'italic' : 'normal');
         doc.setFontSize(8.5);
-        doc.setTextColor(...rgb(COLOR.gris));
-        const lineas = doc.splitTextToSize(limpio(texto), doc.internal.pageSize.getWidth() - MARGEN * 2);
+        doc.setTextColor(...rgb(PAPEL.gris));
+        const lineas = doc.splitTextToSize(limpio(texto), ancho - MARGEN * 2);
         doc.text(lineas, MARGEN, y + 4);
         y += 12 * lineas.length + 10;
+      },
+      // Renglones para firmar (nombre y firma), uno al lado del otro.
+      firmas(etiquetas) {
+        nuevaPagina(120);
+        y += 34;
+        const anchoFirma = (ancho - MARGEN * 2 - 40 * (etiquetas.length - 1)) / etiquetas.length;
+        etiquetas.forEach((etiqueta, i) => {
+          const x = MARGEN + i * (anchoFirma + 40);
+          doc.setDrawColor(...rgb(PAPEL.negro));
+          doc.setLineWidth(0.6);
+          doc.line(x, y, x + anchoFirma, y);
+          doc.setFont('helvetica', 'normal');
+          doc.setFontSize(8);
+          doc.setTextColor(...rgb(PAPEL.gris));
+          doc.text(etiqueta, x, y + 11);
+        });
+        y += 30;
+      },
+      fin() {
+        nuevaPagina(60);
+        doc.setFont('helvetica', 'normal');
+        doc.setFontSize(8.5);
+        doc.setTextColor(...rgb(PAPEL.gris));
+        doc.text('— Fin del reporte —', ancho / 2, y + 6, { align: 'center' });
+        y += 20;
       },
       get y() { return y; },
       set y(v) { y = v; },
     };
   }
 
+  // Pie en todas las páginas ("Página 1 de 3") y, desde la segunda, un membrete corto arriba.
   function piePaginas(doc, texto) {
     const paginas = doc.internal.getNumberOfPages();
     const ancho = doc.internal.pageSize.getWidth();
     const alto = doc.internal.pageSize.getHeight();
     for (let i = 1; i <= paginas; i++) {
       doc.setPage(i);
-      doc.setDrawColor(...rgb(COLOR.borde));
+      doc.setDrawColor(...rgb(PAPEL.linea));
       doc.setLineWidth(0.5);
       doc.line(MARGEN, alto - 32, ancho - MARGEN, alto - 32);
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
-      doc.setTextColor(...rgb(COLOR.gris));
+      doc.setTextColor(...rgb(PAPEL.gris));
       doc.text(limpio(texto), MARGEN, alto - 18);
       doc.text(`Página ${i} de ${paginas}`, ancho - MARGEN, alto - 18, { align: 'right' });
+      if (i > 1) {
+        doc.setFont('helvetica', 'bold');
+        doc.text(`${TIENDA} · ${doc.__titulo || ''}`, MARGEN, 36);
+        doc.setFont('helvetica', 'normal');
+        doc.text(`Página ${i} de ${paginas}`, ancho - MARGEN, 36, { align: 'right' });
+        doc.setDrawColor(...rgb(PAPEL.negro));
+        doc.setLineWidth(0.6);
+        doc.line(MARGEN, 44, ancho - MARGEN, 44);
+      }
     }
   }
 
@@ -593,25 +644,24 @@ window.Exportar = (function () {
     tarjetas.forEach(([etiqueta, valor, nota], i) => {
       const x = MARGEN + i * (anchoTarjeta + espacio);
       const principal = i === 0;
-      doc.setDrawColor(...rgb(principal ? COLOR.primario : COLOR.borde));
-      doc.setFillColor(...rgb(principal ? COLOR.primarioClaro : 'FFFFFF'));
+      doc.setDrawColor(...rgb(principal ? PAPEL.negro : PAPEL.linea));
       doc.setLineWidth(principal ? 1.2 : 0.8);
-      doc.roundedRect(x, 112, anchoTarjeta, 62, 6, 6, 'FD');
-      doc.setTextColor(...rgb(COLOR.gris));
+      doc.roundedRect(x, ARRIBA, anchoTarjeta, 62, 6, 6, 'S');
+      doc.setTextColor(...rgb(PAPEL.gris));
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8.5);
-      doc.text(etiqueta, x + 10, 128);
-      doc.setTextColor(...rgb(COLOR.texto));
+      doc.text(etiqueta, x + 10, ARRIBA + 16);
+      doc.setTextColor(...rgb(PAPEL.negro));
       doc.setFont('helvetica', 'bold');
       doc.setFontSize(15);
-      doc.text(limpio(valor), x + 10, 150);
-      doc.setTextColor(...rgb(COLOR.gris));
+      doc.text(limpio(valor), x + 10, ARRIBA + 38);
+      doc.setTextColor(...rgb(PAPEL.gris));
       doc.setFont('helvetica', 'normal');
       doc.setFontSize(8);
-      doc.text(limpio(nota), x + 10, 165);
+      doc.text(limpio(nota), x + 10, ARRIBA + 53);
     });
 
-    const w = escritor(doc, 196);
+    const w = escritor(doc, ARRIBA + 84);
 
     // Lo demás del periodo, en una sola fila
     w.tabla({
@@ -622,7 +672,7 @@ window.Exportar = (function () {
         plural(c.numAnuladas, 'línea', 'líneas'),
         plural(c.cambiosPrecio.length, 'cambio', 'cambios'),
       ]],
-      headStyles: { ...estiloTabla.headStyles, fillColor: rgb(COLOR.grisClaro), textColor: rgb(COLOR.gris), fontStyle: 'normal', fontSize: 8 },
+      headStyles: { ...estiloTabla.headStyles, textColor: rgb(PAPEL.gris), fontStyle: 'normal', fontSize: 8 },
       styles: { ...estiloTabla.styles, fontSize: 9.5, fontStyle: 'bold', halign: 'center' },
     });
 
@@ -676,17 +726,12 @@ window.Exportar = (function () {
         columnStyles: { 0: { cellWidth: 58 }, 2: { cellWidth: 50 }, 3: { cellWidth: 90 } },
         didParseCell: (d) => {
           if (d.column.index === 2) d.cell.styles.halign = 'right';
-          if (d.section === 'body' && d.column.index === 3) {
-            const agotado = top[d.row.index].cantidad <= 0;
-            d.cell.styles.fillColor = rgb(agotado ? COLOR.rojoClaro : COLOR.ambarClaro);
-            d.cell.styles.textColor = rgb(agotado ? COLOR.rojo : COLOR.ambar);
-            d.cell.styles.fontStyle = 'bold';
-          }
+          if (d.section === 'body' && d.column.index === 3 && top[d.row.index].cantidad <= 0) d.cell.styles.fontStyle = 'bold';
         },
       });
     }
 
-    w.nota('Este PDF es un resumen. El detalle de cada venta y de cada carrito, las entradas y salidas y los cambios de precio están en el Excel de este mismo reporte.');
+    w.nota('Este PDF es un resumen. El detalle de cada ticket está en "Auditoría de caja", las entradas y salidas en "Ajustes de inventario", y todo junto en el Excel de este mismo reporte.');
 
     const pie = c.unDia ? c.desde.split('-').reverse().join('/') : `${c.desde.split('-').reverse().join('/')} a ${c.hasta.split('-').reverse().join('/')}`;
     piePaginas(doc, `Sistema Mayor · ${tituloReporte(c)} ${pie}`);
@@ -714,7 +759,7 @@ window.Exportar = (function () {
       didParseCell: (d) => {
         if ([2, 3, 4].includes(d.column.index)) d.cell.styles.halign = 'right';
         if (d.section === 'body' && v.lineas[d.row.index].anulada_en) {
-          d.cell.styles.textColor = rgb(COLOR.gris);
+          d.cell.styles.textColor = rgb(PAPEL.suave);
           d.cell.styles.fontStyle = 'italic';
         }
       },
@@ -884,79 +929,194 @@ window.Exportar = (function () {
     throw new Error('No encontré las columnas. La primera fila debe tener los títulos: Código, Nombre, Descripción, Cantidad, Precio.');
   }
 
-  // ---------------- Reporte detallado: cada venta con sus productos ----------------
-  async function pdfDetallado(c) {
-    const doc = await nuevoPdf(`${tituloReporte(c)} (detallado)`, mayuscula(c.periodoTexto),
-      `Generado el ${fechaHora.format(c.generadoEn)} por ${c.generadoPor} · ${textoCierre(c)}`);
-    const w = escritor(doc, 120);
-    w.tabla({
-      head: [['Total vendido', 'Ventas', 'Unidades', 'Líneas anuladas']],
-      body: [[limpio(cop.format(c.totalCOP)) + (c.totalUSD != null ? limpio(` (aprox. ${usd.format(c.totalUSD)})`) : ''),
-        num.format(c.numVentas), num.format(c.unidades), num.format(c.numAnuladas)]],
-      headStyles: { ...estiloTabla.headStyles, fillColor: rgb(COLOR.grisClaro), textColor: rgb(COLOR.gris), fontStyle: 'normal', fontSize: 8 },
-      styles: { ...estiloTabla.styles, fontSize: 10, fontStyle: 'bold', halign: 'center' },
-    });
+  // ---------------- Reportes impresos de caja e inventario ----------------
+  const fechaCorta = new Intl.DateTimeFormat('es-CO', { timeZone: ZONA, day: '2-digit', month: '2-digit', year: 'numeric' });
+  const soloHora = new Intl.DateTimeFormat('es-CO', { timeZone: ZONA, hour: 'numeric', minute: '2-digit' });
+  const diaTexto = (iso) => iso.split('-').reverse().join('/');   // AAAA-MM-DD → DD/MM/AAAA
+  const periodoCorto = (c) => (c.unDia ? diaTexto(c.desde) : `${diaTexto(c.desde)} al ${diaTexto(c.hasta)}`);
+  const sufijoArchivo = (c) => (c.unDia ? c.desde : `${c.desde}_a_${c.hasta}`);
+  const impreso = (c) => `Impreso el ${fechaHora.format(c.generadoEn)} · Usuario: ${c.generadoPor}`;
 
-    if (!c.ventas.length) {
+  // Datos generales en dos columnas (etiqueta y valor), sin rayas.
+  function datosGenerales(w, pares) {
+    const filas = [];
+    for (let i = 0; i < pares.length; i += 2) {
+      filas.push([pares[i][0], pares[i][1], pares[i + 1]?.[0] ?? '', pares[i + 1]?.[1] ?? ''].map((x) => limpio(x)));
+    }
+    w.tabla({
+      body: filas,
+      styles: { ...estiloTabla.styles, fontSize: 8.5, cellPadding: { top: 1.5, bottom: 1.5, left: 0, right: 10 }, lineWidth: 0 },
+      columnStyles: { 0: { textColor: rgb(PAPEL.gris), cellWidth: 88 }, 2: { textColor: rgb(PAPEL.gris), cellWidth: 88 } },
+    });
+  }
+
+  // Tasa con la que se hicieron las ventas del periodo; si no hubo ventas, la de hoy.
+  function textoTasa(c) {
+    const tasas = [...new Set(c.ventas.map((v) => Number(v.tasa_usd)).filter((t) => t > 0))].sort((x, y) => x - y);
+    if (tasas.length === 1) return `1 USD = ${cop.format(tasas[0])}`;
+    if (tasas.length > 1) return `de ${cop.format(tasas[0])} a ${cop.format(tasas[tasas.length - 1])} por USD`;
+    return c.tasaActual ? `1 USD = ${cop.format(c.tasaActual)} (hoy)` : 'Sin definir';
+  }
+
+  // Líneas de venta agrupadas por ticket (consecutivo), del primero al último.
+  function agruparTickets(ventas) {
+    const grupos = new Map();
+    for (const v of [...ventas].sort((a, b) => (a.ticket ?? 0) - (b.ticket ?? 0) || a.id - b.id)) {
+      const clave = v.ticket ?? `L${v.id}`;
+      if (!grupos.has(clave)) grupos.set(clave, { ticket: v.ticket, numero_dia: v.numero_dia, vendido_en: v.vendido_en, vendedor: v.vendedor, lineas: [] });
+      grupos.get(clave).lineas.push(v);
+    }
+    return [...grupos.values()];
+  }
+
+  // Auditoría de caja · Detalle: cada ticket con sus productos, el total general y firmas.
+  async function auditoriaCaja(c) {
+    const doc = await nuevoPdf('Auditoría de caja · Detalle', mayuscula(c.periodoTexto), `${impreso(c)} · ${textoCierre(c)}`);
+    const w = escritor(doc, ARRIBA);
+    const tickets = agruparTickets(c.ventas);
+    const consecutivos = tickets.map((t) => t.ticket).filter((n) => n != null);
+    const rango = consecutivos.length ? `${Math.min(...consecutivos)} a ${Math.max(...consecutivos)}` : '-';
+    const anuladas = c.ventas.filter((l) => l.anulada_en);
+    const totalAnulado = anuladas.reduce((s, l) => s + Number(l.total), 0);
+    datosGenerales(w, [
+      ['Fecha de corte', periodoCorto(c)],
+      ['Tasa de cambio', textoTasa(c)],
+      ['Tickets', `${num.format(tickets.length)} · consecutivos ${rango}`],
+      ['Estado del día', textoCierre(c)],
+    ]);
+
+    if (!tickets.length) {
       w.nota('No hubo ventas en este periodo.');
     } else {
-      // Una sola tabla: por cada venta, una fila de encabezado, sus productos y su total.
-      const porVenta = new Map();
-      for (const v of [...c.ventas].sort((a, b) => (a.ticket ?? 0) - (b.ticket ?? 0) || a.id - b.id)) {
-        if (!porVenta.has(v.ticket)) porVenta.set(v.ticket, []);
-        porVenta.get(v.ticket).push(v);
-      }
+      const estiloTicket = {
+        fontStyle: 'bold', textColor: rgb(PAPEL.negro), lineColor: rgb(PAPEL.negro),
+        lineWidth: { top: 0.7, bottom: 0.4 }, cellPadding: { top: 6, bottom: 4, left: 4, right: 4 },
+      };
       const cuerpo = [];
-      const anuladas = new Set();   // índices de filas anuladas (para pintarlas en gris)
-      for (const [, lineas] of porVenta) {
-        const p = lineas[0];
-        const nAnuladas = lineas.filter((l) => l.anulada_en).length;
-        const estadoVenta = nAnuladas === lineas.length ? ' · ANULADA' : nAnuladas ? ' · anulación parcial' : '';
-        cuerpo.push([{
-          content: limpio(`Venta #${p.numero_dia ?? p.ticket}  ·  consecutivo ${p.ticket}  ·  ${fechaHora.format(new Date(p.vendido_en))}  ·  ${p.vendedor || '-'}${estadoVenta}`),
-          colSpan: 6,
-          styles: { fillColor: rgb(COLOR.primarioClaro), fontStyle: 'bold', textColor: rgb(nAnuladas === lineas.length ? COLOR.rojo : COLOR.texto) },
-        }]);
-        for (const l of lineas) {
-          if (l.anulada_en) anuladas.add(cuerpo.length);
-          cuerpo.push([l.codigo || '-', l.anulada_en ? `${l.nombre}  (anulada)` : l.nombre, l.categoria || '-',
-            num.format(l.cantidad), limpio(cop.format(l.precio_unitario)), limpio(cop.format(l.total))]);
+      const grises = new Set();   // filas anuladas (en gris y cursiva; no suman)
+      for (const t of tickets) {
+        const vigentes = t.lineas.filter((l) => !l.anulada_en);
+        const total = vigentes.reduce((s, l) => s + Number(l.total), 0);
+        const unidades = vigentes.reduce((s, l) => s + l.cantidad, 0);
+        const tasa = Number(t.lineas.find((l) => l.tasa_usd)?.tasa_usd) || null;
+        const estado = !vigentes.length ? 'ANULADO' : vigentes.length < t.lineas.length ? 'ANULACIÓN PARCIAL' : '';
+        const cuando = c.unDia ? soloHora.format(new Date(t.vendido_en)) : fechaHora.format(new Date(t.vendido_en));
+        cuerpo.push([
+          { content: limpio(`Ticket #${t.numero_dia ?? t.ticket}   ·   Consecutivo ${t.ticket ?? '-'}   ·   ${cuando}   ·   Vendedor: ${t.vendedor || '-'}${estado ? `   ·   ${estado}` : ''}`), colSpan: 5, styles: estiloTicket },
+          { content: limpio(cop.format(total)), styles: { ...estiloTicket, halign: 'right' } },
+        ]);
+        for (const l of t.lineas) {
+          if (l.anulada_en) grises.add(cuerpo.length);
+          cuerpo.push([l.codigo || '-', num.format(l.cantidad), 'C/U', limpio(cop.format(l.precio_unitario)),
+            l.anulada_en ? `${l.nombre}  (anulada)` : l.nombre, limpio(cop.format(l.total))]);
         }
-        const total = lineas.filter((l) => !l.anulada_en).reduce((s, l) => s + Number(l.total), 0);
-        cuerpo.push([{ content: 'Total de la venta', colSpan: 5, styles: { halign: 'right', fontStyle: 'bold' } },
-          { content: limpio(cop.format(total)), styles: { halign: 'right', fontStyle: 'bold' } }]);
+        cuerpo.push([{
+          content: limpio(`${plural(t.lineas.length, 'producto', 'productos')} · ${plural(unidades, 'unidad', 'unidades')}`
+            + `${tasa && total ? ` · tasa 1 USD = ${cop.format(tasa)} · aprox. ${usd.format(total / tasa)}` : ''}`),
+          colSpan: 6,
+          styles: { fontSize: 7.5, textColor: rgb(PAPEL.gris), halign: 'right', lineWidth: 0, cellPadding: { top: 2, bottom: 9, left: 4, right: 4 } },
+        }]);
       }
-      w.titulo('Ventas', 'Cada venta con sus productos. Las líneas anuladas aparecen en gris y no suman.');
       w.tabla({
-        head: [['Código', 'Producto', 'Categoría', 'Cant.', 'Precio unit.', 'Subtotal']],
+        head: [['Código', 'Cant.', 'Unid.', 'Precio', 'Descripción', 'Subtotal']],
         body: cuerpo,
-        foot: [[{ content: `TOTAL DEL PERIODO (${plural(c.numVentas, 'venta', 'ventas')})`, colSpan: 3 },
-          num.format(c.unidades), '', limpio(cop.format(c.totalCOP))]],
-        alternateRowStyles: {},
-        columnStyles: { 0: { cellWidth: 56 }, 2: { cellWidth: 72 }, 3: { cellWidth: 36 }, 4: { cellWidth: 72 }, 5: { cellWidth: 76 } },
+        columnStyles: { 0: { cellWidth: 60 }, 1: { cellWidth: 36 }, 2: { cellWidth: 32 }, 3: { cellWidth: 72 }, 5: { cellWidth: 76 } },
         didParseCell: (d) => {
-          if ([3, 4, 5].includes(d.column.index) && d.cell.colSpan === 1) d.cell.styles.halign = 'right';
-          if (d.section === 'body' && anuladas.has(d.row.index)) {
-            d.cell.styles.textColor = rgb(COLOR.gris);
+          if ([1, 3, 5].includes(d.column.index) && d.cell.colSpan === 1) d.cell.styles.halign = 'right';
+          if (d.section === 'body' && grises.has(d.row.index)) {
+            d.cell.styles.textColor = rgb(PAPEL.suave);
             d.cell.styles.fontStyle = 'italic';
           }
         },
       });
     }
 
+    w.titulo('Total general');
+    w.tabla({
+      body: [
+        ['Total vendido', `${limpio(cop.format(c.totalCOP))}${c.totalUSD != null ? limpio(`  (aprox. ${usd.format(c.totalUSD)})`) : ''}`],
+        ['Tickets', `${num.format(tickets.length)}  (consecutivos ${rango})`],
+        ['Unidades vendidas', num.format(c.unidades)],
+        ['Líneas anuladas', anuladas.length ? `${num.format(anuladas.length)} por ${limpio(cop.format(totalAnulado))} (no suman en el total)` : 'Ninguna'],
+      ],
+      columnStyles: { 0: { cellWidth: 150, textColor: rgb(PAPEL.gris) }, 1: { fontStyle: 'bold' } },
+      didParseCell: (d) => { if (d.row.index === 0 && d.column.index === 1) d.cell.styles.fontSize = 11; },
+    });
+
     if (c.porVendedor.length) {
       w.titulo('Ventas por vendedor');
       w.tabla({
-        head: [['Vendedor', 'Ventas', 'Unidades', 'Total']],
+        head: [['Vendedor', 'Tickets', 'Unidades', 'Total']],
         body: c.porVendedor.map((v) => [v.vendedor, num.format(v.ventas), num.format(v.unidades), limpio(cop.format(v.total))]),
-        columnStyles: { 1: { cellWidth: 55 }, 2: { cellWidth: 60 }, 3: { cellWidth: 90 } },
+        columnStyles: { 1: { cellWidth: 60 }, 2: { cellWidth: 70 }, 3: { cellWidth: 100 } },
         didParseCell: (d) => { if (d.column.index > 0) d.cell.styles.halign = 'right'; },
       });
     }
 
-    const pie = c.unDia ? c.desde.split('-').reverse().join('/') : `${c.desde.split('-').reverse().join('/')} a ${c.hasta.split('-').reverse().join('/')}`;
-    piePaginas(doc, `Sistema Mayor · ${tituloReporte(c)} detallado ${pie}`);
-    doc.save(nombreArchivo(c, 'pdf').replace('.pdf', '-detallado.pdf'));
+    w.firmas(['Elaborado por (nombre y firma)', 'Revisado por (nombre y firma)']);
+    w.fin();
+    piePaginas(doc, `Sistema Mayor · Auditoría de caja ${periodoCorto(c)}`);
+    doc.save(`Auditoria-de-caja-${sufijoArchivo(c)}.pdf`);
+  }
+
+  // Actividad de inventario · Ajustes: entradas y salidas de mercancía, con firma de quien autoriza.
+  async function ajustesInventario(c) {
+    const doc = await nuevoPdf('Actividad de inventario · Ajustes', mayuscula(c.periodoTexto), impreso(c));
+    const w = escritor(doc, ARRIBA);
+    const porFecha = (a, b) => a.creado_en.localeCompare(b.creado_en) || a.id - b.id;
+    const ajustes = c.movimientos.filter((m) => m.tipo === 'entrada' || m.tipo === 'salida').sort(porFecha);
+    const devoluciones = c.movimientos.filter((m) => m.tipo === 'anulacion').sort(porFecha);
+    const entradas = ajustes.filter((m) => m.tipo === 'entrada');
+    const salidas = ajustes.filter((m) => m.tipo === 'salida');
+    const suma = (ms) => ms.reduce((s, m) => s + m.cantidad, 0);
+    datosGenerales(w, [
+      ['Fecha de corte', periodoCorto(c)],
+      ['Ajustes', `${num.format(ajustes.length)}  (${plural(entradas.length, 'entrada', 'entradas')}, ${plural(salidas.length, 'salida', 'salidas')})`],
+      ['Unidades', `+${num.format(suma(entradas))} entraron · -${num.format(suma(salidas))} salieron`],
+      ['Devoluciones', devoluciones.length ? `${num.format(devoluciones.length)} por ventas anuladas` : 'Ninguna'],
+    ]);
+
+    const fila = (m, notas) => [
+      m.codigo || '-', m.nombre, `${fechaCorta.format(new Date(m.creado_en))}\n${soloHora.format(new Date(m.creado_en))}`,
+      `#${m.id}`, notas, m.usuario || '-',
+      `${m.tipo === 'salida' ? '-' : '+'}${num.format(m.cantidad)}`,
+      m.stock_antes == null ? '-' : num.format(m.stock_antes),
+      m.stock_despues == null ? '-' : num.format(m.stock_despues),
+    ];
+    const tablaMovimientos = (filas) => w.tabla({
+      head: [['Código', 'Descripción', 'Fecha', 'Documento', 'Notas', 'Usuario', 'Cant. ajustada', 'Exist. anterior', 'Exist. actual']],
+      body: filas,
+      styles: { ...estiloTabla.styles, fontSize: 8 },
+      columnStyles: {
+        0: { cellWidth: 50 }, 2: { cellWidth: 54 }, 3: { cellWidth: 56 }, 4: { cellWidth: 92 }, 5: { cellWidth: 42 },
+        6: { cellWidth: 44, fontStyle: 'bold' }, 7: { cellWidth: 44 }, 8: { cellWidth: 40 },
+      },
+      didParseCell: (d) => { if (d.column.index >= 6) d.cell.styles.halign = 'right'; },
+    });
+
+    if (ajustes.length) {
+      tablaMovimientos(ajustes.map((m) => fila(m, `${m.tipo === 'entrada' ? 'Ajuste arriba' : 'Ajuste abajo'} · ${m.motivo || '-'}`)));
+    } else {
+      w.nota('No hubo entradas ni salidas de mercancía en este periodo.');
+    }
+
+    w.tabla({
+      body: [
+        [`${plural(entradas.length, 'ajuste ascendente', 'ajustes ascendentes')} (entradas)`, `+${num.format(suma(entradas))} ${suma(entradas) === 1 ? 'unidad' : 'unidades'}`],
+        [`${plural(salidas.length, 'ajuste descendente', 'ajustes descendentes')} (salidas)`, `-${num.format(suma(salidas))} ${suma(salidas) === 1 ? 'unidad' : 'unidades'}`],
+      ],
+      columnStyles: { 0: { cellWidth: 260 }, 1: { fontStyle: 'bold', halign: 'right', cellWidth: 120 } },
+    });
+
+    if (devoluciones.length) {
+      w.titulo('Devoluciones por ventas anuladas', 'Las unidades de las ventas anuladas volvieron al inventario.');
+      tablaMovimientos(devoluciones.map((m) => fila(m, m.motivo || 'Venta anulada')));
+    }
+
+    w.firmas(['Autorizado por (nombre y firma)', 'Revisado por (nombre y firma)']);
+    w.fin();
+    piePaginas(doc, `Sistema Mayor · Ajustes de inventario ${periodoCorto(c)}`);
+    doc.save(`Ajustes-de-inventario-${sufijoArchivo(c)}.pdf`);
   }
 
   // ---------------- Lista de precios (código, descripción y precio) ----------------
@@ -964,7 +1124,7 @@ window.Exportar = (function () {
     const hoy = new Date();
     const doc = await nuevoPdf('Lista de precios', mayuscula(new Intl.DateTimeFormat('es-CO', { timeZone: ZONA, dateStyle: 'full' }).format(hoy)),
       `Generada el ${fechaHora.format(hoy)} por ${generadoPor || '-'} · ${plural(productos.length, 'producto', 'productos')}`);
-    const w = escritor(doc, 116);
+    const w = escritor(doc, ARRIBA);
     const cuerpo = [];
     let categoriaActual;
     // Por categoría y, dentro de cada una, por código (así se buscan los productos).
@@ -973,7 +1133,7 @@ window.Exportar = (function () {
       if (p.categoria !== categoriaActual) {
         categoriaActual = p.categoria;
         cuerpo.push([{ content: (categoriaActual || 'Sin categoría').toUpperCase(), colSpan: tasa ? 4 : 3,
-          styles: { fillColor: rgb(COLOR.primarioClaro), fontStyle: 'bold', textColor: rgb(COLOR.primario) } }]);
+          styles: { fontStyle: 'bold', textColor: rgb(PAPEL.negro), lineColor: rgb(PAPEL.negro), lineWidth: { bottom: 0.8 }, cellPadding: { top: 12, bottom: 3, left: 4, right: 4 } } }]);
       }
       const descripcion = p.descripcion ? `${p.nombre} - ${p.descripcion}` : p.nombre;
       cuerpo.push([p.codigo || '-', descripcion, limpio(cop.format(p.precio_cop)),
@@ -993,5 +1153,5 @@ window.Exportar = (function () {
     doc.save(`Lista-de-precios-${new Intl.DateTimeFormat('en-CA', { timeZone: ZONA }).format(hoy)}.pdf`);
   }
 
-  return { excel, pdf, pdfDetallado, pdfVenta, listaPrecios, plantilla, leerProductos };
+  return { excel, pdf, auditoriaCaja, ajustesInventario, pdfVenta, listaPrecios, plantilla, leerProductos };
 })();

@@ -276,8 +276,15 @@ o un periodo **personalizado** (desde – hasta). Las semanas empiezan el lunes.
 - **Anular** una línea de venta equivocada, o la venta completa desde su detalle (con la clave
   del jefe): las unidades vuelven al inventario y queda marcada como anulada (no se borra).
   En un día cerrado no se ofrece anular.
-- **PDF detallado**: cada venta con sus productos, categoría, cantidad, precio y subtotal, y el
-  total de cada venta y del periodo.
+- **Auditoría de caja** (PDF para imprimir): cada ticket con su número del día, consecutivo, hora,
+  vendedor y total, y debajo sus productos (código, cantidad, C/U, precio, descripción y
+  subtotal; las líneas anuladas en gris). Al final: total general, tickets con su rango de
+  consecutivos, unidades, líneas anuladas, ventas por vendedor, renglones para firmar
+  ("Elaborado por" y "Revisado por") y "Fin del reporte".
+- **Ajustes de inventario** (PDF para imprimir): cada entrada y salida de mercancía con fecha y
+  hora, documento, notas (ajuste arriba/abajo y motivo), usuario, cantidad ajustada y existencia
+  anterior y actual; los ajustes ascendentes y descendentes, las devoluciones por ventas
+  anuladas y la firma de quien autoriza.
 - **PDF resumen**: un **resumen** de una página para un día normal (indicadores, entradas,
   salidas, anulaciones y cambios de precio, ventas por vendedor y por día, los 10 productos más
   vendidos y los 10 por agotarse).
@@ -286,6 +293,10 @@ o un periodo **personalizado** (desde – hasta). Las semanas empiezan el lunes.
   vendedor, Entradas y salidas, Cambios de precio, Por agotarse e Inventario con categoría).
 
 Mientras el periodo incluya el día de hoy, los datos se actualizan solos cada minuto.
+
+Todos los PDF salen **en blanco y negro** (sin colores, para que rinda la tinta y cualquier
+impresora los imprima bien), en tamaño carta, con el membrete de la tienda (`NOMBRE_TIENDA` en
+`js/config.js`), quién y cuándo los imprimió, y "Página 1 de N".
 
 ### Accesibilidad y uso con teclado o pantalla táctil
 

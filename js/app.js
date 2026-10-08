@@ -2370,7 +2370,9 @@
           .select('codigo, nombre, descripcion, categoria, cantidad, precio_cop').order('categoria').order('nombre'));
         await window.Exportar.excel(cierre, inventario);
       } else if (tipo === 'pdf-detallado') {
-        await window.Exportar.pdfDetallado(cierre);
+        await window.Exportar.auditoriaCaja(cierre);
+      } else if (tipo === 'pdf-ajustes') {
+        await window.Exportar.ajustesInventario(cierre);
       } else {
         await window.Exportar.pdf(cierre);
       }
@@ -2385,6 +2387,7 @@
   $('#btn-excel').addEventListener('click', (e) => exportar(e.currentTarget, 'excel'));
   $('#btn-pdf').addEventListener('click', (e) => exportar(e.currentTarget, 'pdf'));
   $('#btn-pdf-detallado').addEventListener('click', (e) => exportar(e.currentTarget, 'pdf-detallado'));
+  $('#btn-pdf-ajustes').addEventListener('click', (e) => exportar(e.currentTarget, 'pdf-ajustes'));
 
   // Botones "Cancelar" de todos los diálogos
   document.querySelectorAll('[data-cerrar]').forEach((boton) => {
